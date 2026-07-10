@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A4 Plain Paper Label Sheet Generator</title>
+    <!-- Load Barcode Library -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --background: #f8fafc;
+            --card: #ffffff;
+            --text: #0f172a;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--background);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .no-print {
+            width: 100%;
+            max-width: 500px;
+            background: var(--card);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+            box-sizing: border-box;
+            margin-bottom: 30px;
+        }
+
+        h2 {
+            margin-top: 0;
+            text-align: center;
+            color: var(--primary);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        /* --- A4 Page Preview & Print Grid --- */
+        #print-area {
+            background: white;
+            width: 210mm;
+            min-height: 297mm;
+            padding: 8mm 6mm;
+            box-sizing: border-box;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            display: grid;
+            grid-template-columns: repeat(3, 1fr); /* 3 columns across */
+            grid-auto-rows: 31mm; /* Clean height for 9 rows */
+            align-content: start;
+            border-left: 1px dashed #cbd5e1;
+            border-top: 1px dashed #cbd5e1;
+        }
+
+        /* Single Label with full cutting borders */
+        .label-card {
+            border-right: 1px solid #94a3b8;
+            border-bottom: 1px solid #94a3b8;
+            padding: 3mm;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            font-family: Arial, sans-serif;
+            color: black;
+            background: #fff;
+            overflow: hidden;
+        }
+
+        .lbl-header {
+            font-size: 8.5pt;
+            font-weight: bold;
+            border-bottom: 1px solid #000;
+            padding-bottom: 1px;
+            text-transform: uppercase;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .lbl-body {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-grow: 1;
+            margin-top: 2px;
+        }
+
+        .lbl-details {
+            font-size: 7.5pt;
+            line-height: 1.25;
+            max-width: 62%;
+        }
+
+        .lbl-title {
+            font-size: 9pt;
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+
+        .lbl-barcode-box {
+            width: 38%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .lbl-barcode-box svg {
+            width: 100%;
+            height: auto;
+            max-height: 20mm;
+        }
+
+        .lbl-footer {
+            font-size: 7pt;
+            border-top: 1px solid #000;
+            padding-top: 1px;
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+        }
+
+        /* --- Pure Print Layout Controls --- */
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            .no-print {
+                display: none !important;
+            }
+            #print-area {
+                box-shadow: none;
+                padding: 8mm 6mm;
+                width: 210mm;
+                height: 297mm;
+                border: none;
+            }
+            .label-card {
+                border-right: 1px solid #000000; /* Darker border for clean visibility under heavy light */
+                border-bottom: 1px solid #000000;
+                page-break-inside: avoid;
+            }
+            
+            /* Ensures proper edge borders for cutting the outer labels */
+            #print-area {
+                border-left: 1px solid #000000;
+                border-top: 1px solid #000000;
+            }
+            
+            @page {
+                size: A4 portrait;
+                margin: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="no-print">
+        <h2>A4 Label Sheet Generator</h2>
+        
+        <div class="form-group">
+            <label for="companyName">Company Name</label>
+            <input type="text" id="companyName" value="Cashvik Foods">
+        </div>
+
+        <div class="form-group">
+            <label for="prodName">Product Name</label>
+            <input type="text" id="prodName" value="Premium Almonds">
+        </div>
+
+        <div class="form-group">
+            <label for="prodCode">SKU / Code (Barcode)</label>
+            <input type="text" id="prodCode" value="ALM1001">
+        </div>
+
+        <div class="form-group">
+            <label for="fssai">FSSAI No.</label>
+            <input type="text" id="fssai" placeholder="Enter FSSAI number">
+        </div>
+
+        <div class="form-group">
+            <label for="gstin">GSTIN</label>
+            <input type="text" id="gstin" placeholder="Enter GST number">
+        </div>
+
+        <div class="form-group">
+            <label for="netWeight">Net Weight</label>
+            <input type="text" id="netWeight" value="500g">
+        </div>
+
+        <div class="form-group">
+            <label for="printCount">Number of Labels to Print</label>
+            <input type="number" id="printCount" value="27" min="1" max="54">
+        </div>
+
+        <div class="btn-group">
+            <button onclick="generateSheet()" style="background-color: #3b82f6;">Preview Sheet</button>
+            <button onclick="window.print()" style="background-color: var(--primary);">Print Sheet</button>
+        </div>
+    </div>
+
+    <!-- The actual A4 Sheet Preview -->
+    <div id="print-area"></div>
+
+    <script>
+        function generateSheet() {
+            const container = document.getElementById('print-area');
+            container.innerHTML = ''; // Clear previous grid items
+
+            // Gather inputs
+            const company = document.getElementById('companyName').value;
+            const product = document.getElementById('prodName').value;
+            const code = document.getElementById('prodCode').value;
+            const fssai = document.getElementById('fssai').value || 'N/A';
+            const gst = document.getElementById('gstin').value || 'N/A';
+            const weight = document.getElementById('netWeight').value;
+            const count = parseInt(document.getElementById('printCount').value) || 1;
+
+            // Generate the requested number of labels
+            for (let i = 0; i < count; i++) {
+                const uniqueBarcodeId = `barcode-${i}`;
+                
+                const labelHTML = `
+                    <div class="label-card">
+                        <div class="lbl-header">by national traders</div>
+                        <div class="lbl-body">
+                            <div class="lbl-details">
+                                <div class="lbl-title">${product}</div>
+                                <div><strong>GST:</strong> ${gst}</div>
+                                <div><strong>FSSAI:</strong> ${fssai}</div>
+                            </div>
+                            <div class="lbl-barcode-box">
+                                <svg id="${uniqueBarcodeId}"></svg>
+                            </div>
+                        </div>
+                        <div class="lbl-footer">
+                            <div>Weight: ${weight}</div>
+                            <div>${company}</div>
+                        </div>
+                    </div>
+                `;
+                
+                container.insertAdjacentHTML('beforeend', labelHTML);
+
+                // Render barcode for this individual slot
+                if (code.trim() !== "") {
+                    try {
+                        JsBarcode(`#${uniqueBarcodeId}`, code, {
+                            format: "CODE128",
+                            displayValue: true,
+                            fontSize: 9,
+                            margin: 0,
+                            height: 32,
+                            width: 1.4
+                        });
+                    } catch (e) {
+                        console.error("Barcode generation error", e);
+                    }
+                }
+            }
+        }
+
+        // Auto-run on load to show initial layout
+        generateSheet();
+    </script>
+
+</body>
+</html>
