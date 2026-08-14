@@ -19,15 +19,9 @@ import type { Priority } from "@/lib/types";
 
 export default function OrderDetailPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params);
-  const {
-    currentUser,
-    getCustomer,
-    state,
-    updateOrderBeforePacking,
-  } = useAppContext();
+  const { currentUser, state, updateOrderBeforePacking } = useAppContext();
 
   const order = state.orders.find((item) => item.id === orderId);
-  const customer = order ? getCustomer(order.customerId) : undefined;
   const events = useMemo(
     () => state.auditEvents.filter((event) => event.orderId === orderId),
     [orderId, state.auditEvents],
@@ -35,7 +29,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
 
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
-    customerId: order?.customerId ?? "",
+    customerName: order?.customerName ?? "",
+    contactPerson: order?.contactPerson ?? "",
+    mobile: order?.mobile ?? "",
+    address: order?.address ?? "",
+    gst: order?.gst ?? "",
     invoiceNumber: order?.invoiceNumber ?? "",
     invoiceDate: order?.invoiceDate ?? "",
     deliveryDate: order?.deliveryDate ?? "",
@@ -68,6 +66,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
     if (!order) return;
     updateOrderBeforePacking(order.id, {
       ...form,
+      gst: form.gst || undefined,
       notes: form.notes || undefined,
       products: products.map((product) => ({
         productName: product.productName,
@@ -82,7 +81,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
     <div className="space-y-5">
       <PageHeader
         eyebrow={order.orderNumber}
-        title={customer?.name ?? "Order"}
+        title={order.customerName}
         description={`${order.invoiceNumber} · Delivery ${formatDate(order.deliveryDate)}`}
         actions={
           <div className="flex gap-2">
@@ -107,17 +106,34 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         >
           {editing ? (
             <form className="grid gap-3" onSubmit={saveEdit}>
-              <Select
-                label="Customer"
-                value={form.customerId}
-                onChange={(event) => setForm((previous) => ({ ...previous, customerId: event.target.value }))}
-              >
-                {state.customers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </Select>
+              <Input
+                label="Customer name"
+                value={form.customerName}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, customerName: event.target.value }))
+                }
+              />
+              <Input
+                label="Contact person"
+                value={form.contactPerson}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, contactPerson: event.target.value }))
+                }
+              />
+              <Input
+                label="Mobile"
+                value={form.mobile}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, mobile: event.target.value }))
+                }
+              />
+              <TextArea
+                label="Address"
+                value={form.address}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, address: event.target.value }))
+                }
+              />
               <Input
                 label="Invoice number"
                 value={form.invoiceNumber}
@@ -203,15 +219,20 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
           ) : (
             <div className="space-y-3 text-sm text-slate-700">
               <p>
-                <span className="font-medium text-slate-900">Customer:</span> {customer?.name}
+                <span className="font-medium text-slate-900">Customer:</span> {order.customerName}
               </p>
               <p>
-                <span className="font-medium text-slate-900">Contact:</span> {customer?.contactPerson} ·{" "}
-                {customer?.mobile}
+                <span className="font-medium text-slate-900">Contact:</span> {order.contactPerson} ·{" "}
+                {order.mobile}
               </p>
               <p>
-                <span className="font-medium text-slate-900">Address:</span> {customer?.address}
+                <span className="font-medium text-slate-900">Address:</span> {order.address}
               </p>
+              {order.gst ? (
+                <p>
+                  <span className="font-medium text-slate-900">GST:</span> {order.gst}
+                </p>
+              ) : null}
               <p>
                 <span className="font-medium text-slate-900">Created by:</span> {order.createdBy} ·{" "}
                 {formatDateTime(order.createdAt)}
@@ -226,9 +247,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                 <p>
                   <span className="font-medium text-slate-900">Packing completed:</span>{" "}
                   {formatDateTime(order.packingCompletedTime)}
-                  {order.packingDurationMinutes
-                    ? ` · ${order.packingDurationMinutes} min`
-                    : ""}
+                  {order.packingDurationMinutes ? ` · ${order.packingDurationMinutes} min` : ""}
                 </p>
               ) : null}
               {order.deliveryStartTime ? (

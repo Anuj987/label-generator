@@ -8,7 +8,7 @@ import { STATUS_LABELS } from "@/lib/demo-data";
 import { formatCurrency, formatDateTime, isSameDay } from "@/lib/storage";
 
 export default function DashboardPage() {
-  const { currentUser, state, getCustomer } = useAppContext();
+  const { currentUser, state } = useAppContext();
 
   const stats = useMemo(() => {
     const todayOrders = state.orders.filter((order) => isSameDay(order.createdAt));
@@ -77,29 +77,32 @@ export default function DashboardPage() {
               </p>
             </div>
           ))}
+          {!state.auditEvents.length ? (
+            <EmptyState title="No activity yet" description="Create an order to start the feed." />
+          ) : null}
         </div>
       </SectionCard>
 
       <SectionCard title="Recent orders">
         <div className="space-y-3">
-          {state.orders.slice(0, 6).map((order) => {
-            const customer = getCustomer(order.customerId);
-            return (
-              <Link
-                key={order.id}
-                href={`/orders/${order.id}`}
-                className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 hover:bg-slate-50"
-              >
-                <div>
-                  <p className="font-semibold text-slate-900">{order.orderNumber}</p>
-                  <p className="text-sm text-slate-600">
-                    {customer?.name} · {order.invoiceNumber}
-                  </p>
-                </div>
-                <Badge tone="teal">{STATUS_LABELS[order.status]}</Badge>
-              </Link>
-            );
-          })}
+          {state.orders.slice(0, 6).map((order) => (
+            <Link
+              key={order.id}
+              href={`/orders/${order.id}`}
+              className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 hover:bg-slate-50"
+            >
+              <div>
+                <p className="font-semibold text-slate-900">{order.orderNumber}</p>
+                <p className="text-sm text-slate-600">
+                  {order.customerName} · {order.invoiceNumber}
+                </p>
+              </div>
+              <Badge tone="teal">{STATUS_LABELS[order.status]}</Badge>
+            </Link>
+          ))}
+          {!state.orders.length ? (
+            <EmptyState title="No orders yet" description="Create orders from the Orders page." />
+          ) : null}
         </div>
       </SectionCard>
     </div>

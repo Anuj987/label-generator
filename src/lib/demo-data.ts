@@ -68,7 +68,6 @@ export function totalQuantity(products: OrderProduct[]) {
 
 export function createInitialState(): AppState {
   return {
-    customers: [],
     orders: [],
     payments: [],
     auditEvents: [],

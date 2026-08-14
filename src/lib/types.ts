@@ -30,19 +30,6 @@ export type UserProfile = {
   role: Role;
 };
 
-export type Customer = {
-  id: string;
-  name: string;
-  contactPerson: string;
-  mobile: string;
-  address: string;
-  gst?: string;
-  notes?: string;
-  billingSource?: string;
-  externalCustomerId?: string;
-  createdAt: string;
-};
-
 export type OrderProduct = {
   id: string;
   productName: string;
@@ -79,13 +66,18 @@ export type UploadedFile = {
   paymentId?: string;
 };
 
+/** Customer details are typed per order — not saved in a customer master. */
 export type Order = {
   id: string;
   orderNumber: string;
   invoiceNumber: string;
   invoiceDate: string;
   deliveryDate: string;
-  customerId: string;
+  customerName: string;
+  contactPerson: string;
+  mobile: string;
+  address: string;
+  gst?: string;
   priority: Priority;
   notes?: string;
   status: OrderStatus;
@@ -111,7 +103,7 @@ export type Order = {
 
 export type Payment = {
   id: string;
-  customerId: string;
+  customerName: string;
   invoiceNumber: string;
   invoiceDate: string;
   amount: number;
@@ -136,22 +128,10 @@ export type AuditEvent = {
 };
 
 export type AppState = {
-  customers: Customer[];
   orders: Order[];
   payments: Payment[];
   auditEvents: AuditEvent[];
   nextOrderSequence: number;
-};
-
-export type CustomerInput = {
-  name: string;
-  contactPerson: string;
-  mobile: string;
-  address: string;
-  gst?: string;
-  notes?: string;
-  billingSource?: string;
-  externalCustomerId?: string;
 };
 
 export type OrderProductInput = {
@@ -164,7 +144,11 @@ export type CreateOrderInput = {
   invoiceNumber: string;
   invoiceDate: string;
   deliveryDate: string;
-  customerId: string;
+  customerName: string;
+  contactPerson: string;
+  mobile: string;
+  address: string;
+  gst?: string;
   priority: Priority;
   notes?: string;
   products: OrderProductInput[];
@@ -174,7 +158,7 @@ export type CreateOrderInput = {
 };
 
 export type PaymentInput = {
-  customerId: string;
+  customerName: string;
   invoiceNumber: string;
   invoiceDate: string;
   amount: number;

@@ -15,10 +15,10 @@ import { fileToDataUrl, formatCurrency, formatDateTime } from "@/lib/storage";
 import type { DocumentKind, PaymentMode } from "@/lib/types";
 
 export default function PaymentsPage() {
-  const { currentUser, getCustomer, recordPayment, state } = useAppContext();
+  const { currentUser, recordPayment, state } = useAppContext();
   const [query, setQuery] = useState("");
   const [form, setForm] = useState({
-    customerId: "",
+    customerName: "",
     invoiceNumber: "",
     invoiceDate: new Date().toISOString().slice(0, 10),
     amount: "",
@@ -31,15 +31,13 @@ export default function PaymentsPage() {
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
     return state.payments.filter((payment) => {
-      const customer = getCustomer(payment.customerId);
       if (!search) return true;
       return (
         payment.invoiceNumber.toLowerCase().includes(search) ||
-        customer?.name.toLowerCase().includes(search) ||
-        customer?.mobile.includes(search)
+        payment.customerName.toLowerCase().includes(search)
       );
     });
-  }, [getCustomer, query, state.payments]);
+  }, [query, state.payments]);
 
   if (!currentUser) return null;
 
@@ -54,7 +52,7 @@ export default function PaymentsPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!form.customerId || !form.amount) return;
+    if (!form.customerName.trim() || !form.amount) return;
 
     const kindByMode: Record<PaymentMode, DocumentKind> = {
       cash: "receipt",
@@ -75,7 +73,7 @@ export default function PaymentsPage() {
     }
 
     await recordPayment({
-      customerId: form.customerId,
+      customerName: form.customerName,
       invoiceNumber: form.invoiceNumber,
       invoiceDate: form.invoiceDate,
       amount: Number(form.amount),
@@ -86,7 +84,7 @@ export default function PaymentsPage() {
     });
 
     setForm({
-      customerId: "",
+      customerName: "",
       invoiceNumber: "",
       invoiceDate: new Date().toISOString().slice(0, 10),
       amount: "",
@@ -102,25 +100,21 @@ export default function PaymentsPage() {
       <PageHeader
         eyebrow="Payments"
         title="Payment collection"
-        description="Independent of delivery. Optionally link an order, but never required."
+        description="Type the customer name each time. No customer list is saved."
       />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <SectionCard title="Collect payment">
           <form className="grid gap-4" onSubmit={handleSubmit}>
-            <Select
-              label="Customer"
+            <Input
+              label="Customer name"
               required
-              value={form.customerId}
-              onChange={(event) => setForm((previous) => ({ ...previous, customerId: event.target.value }))}
-            >
-              <option value="">Select customer</option>
-              {state.customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.name}
-                </option>
-              ))}
-            </Select>
+              value={form.customerName}
+              onChange={(event) =>
+                setForm((previous) => ({ ...previous, customerName: event.target.value }))
+              }
+              placeholder="Type customer name"
+            />
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 label="Invoice number"
@@ -168,7 +162,7 @@ export default function PaymentsPage() {
               <option value="">No linked order</option>
               {state.orders.map((order) => (
                 <option key={order.id} value={order.id}>
-                  {order.orderNumber} · {order.invoiceNumber}
+                  {order.orderNumber} · {order.customerName} · {order.invoiceNumber}
                 </option>
               ))}
             </Select>
@@ -187,49 +181,46 @@ export default function PaymentsPage() {
           </form>
         </SectionCard>
 
-        <SectionCard title="Payment list" description="Search by customer or invoice number.">
+        <SectionCard title="Payment list" description="Search by typed customer name or invoice number.">
           <Input
             label="Search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Patel Brothers, INV-88921..."
+            placeholder="Customer name, INV-88921..."
           />
           <div className="mt-4 space-y-3">
-            {filtered.map((payment) => {
-              const customer = getCustomer(payment.customerId);
-              return (
-                <div key={payment.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-slate-950">{formatCurrency(payment.amount)}</p>
-                      <p className="text-sm text-slate-600">
-                        {customer?.name} · {payment.invoiceNumber}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {payment.mode.replace("_", " ")} · {payment.collectedBy} ·{" "}
-                        {formatDateTime(payment.createdAt)}
-                      </p>
-                    </div>
+            {filtered.map((payment) => (
+              <div key={payment.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-950">{formatCurrency(payment.amount)}</p>
+                    <p className="text-sm text-slate-600">
+                      {payment.customerName} · {payment.invoiceNumber}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {payment.mode.replace("_", " ")} · {payment.collectedBy} ·{" "}
+                      {formatDateTime(payment.createdAt)}
+                    </p>
                   </div>
-                  {payment.documents.length ? (
-                    <div className="mt-3 space-y-1">
-                      {payment.documents.map((doc) => (
-                        <a
-                          key={doc.id}
-                          href={doc.dataUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block text-sm text-teal-700 hover:underline"
-                        >
-                          {doc.name}
-                        </a>
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
-              );
-            })}
-            {!filtered.length ? <EmptyState title="No payments found" /> : null}
+                {payment.documents.length ? (
+                  <div className="mt-3 space-y-1">
+                    {payment.documents.map((doc) => (
+                      <a
+                        key={doc.id}
+                        href={doc.dataUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-sm text-teal-700 hover:underline"
+                      >
+                        {doc.name}
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+            {!filtered.length ? <EmptyState title="No payments yet" /> : null}
           </div>
         </SectionCard>
       </div>
