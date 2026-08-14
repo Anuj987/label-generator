@@ -22,7 +22,6 @@ import type { Role } from "@/lib/types";
 const NAV: Record<Role, Array<{ href: string; label: string; icon: typeof Users }>> = {
   admin: [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/customers", label: "Customers", icon: Users },
     { href: "/orders", label: "Orders", icon: ClipboardList },
     { href: "/payments", label: "Payments", icon: Wallet },
     { href: "/search", label: "Search", icon: Search },
@@ -202,23 +201,23 @@ export function AppShell({ children }: { children: ReactNode }) {
                         setSearchOpen(false);
                       }}
                     >
-                      {order.orderNumber} · {order.invoiceNumber}
+                      {order.orderNumber} · {order.customerName} · {order.invoiceNumber}
                     </Link>
                   ))}
-                  {results.customers.slice(0, 4).map((customer) => (
+                  {results.payments.slice(0, 4).map((payment) => (
                     <Link
-                      key={customer.id}
-                      href="/customers"
+                      key={payment.id}
+                      href="/payments"
                       className="block rounded-xl px-2 py-2 text-sm hover:bg-slate-50"
                       onClick={() => {
                         setQuery("");
                         setSearchOpen(false);
                       }}
                     >
-                      {customer.name} · {customer.mobile}
+                      ₹{payment.amount.toLocaleString("en-IN")} · {payment.customerName}
                     </Link>
                   ))}
-                  {!results.orders.length && !results.customers.length ? (
+                  {!results.orders.length && !results.payments.length ? (
                     <p className="px-2 py-2 text-sm text-slate-500">No matches</p>
                   ) : null}
                 </div>

@@ -20,7 +20,6 @@ import {
 import type {
   AppState,
   CreateOrderInput,
-  CustomerInput,
   DocumentKind,
   Order,
   PartialDeliveryLine,
@@ -36,7 +35,6 @@ type AppContextValue = {
   state: AppState;
   login: (role: Role) => void;
   logout: () => void;
-  createCustomer: (input: CustomerInput) => void;
   createOrder: (input: CreateOrderInput) => Order;
   updateOrderBeforePacking: (orderId: string, input: CreateOrderInput) => void;
   acceptOrder: (orderId: string) => void;
@@ -53,11 +51,7 @@ type AppContextValue = {
   completeFullReturn: (orderId: string, reason: string, files: File[]) => Promise<void>;
   recordPayment: (input: PaymentInput) => Promise<void>;
   addOrderDocuments: (orderId: string, files: File[], kind: DocumentKind) => Promise<void>;
-  getCustomer: (id: string) => AppState["customers"][number] | undefined;
-  searchAll: (query: string) => {
-    customers: AppState["customers"];
-    orders: AppState["orders"];
-  };
+  searchAll: (query: string) => { orders: AppState["orders"]; payments: AppState["payments"] };
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -85,7 +79,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(() => loadState());
 
   useEffect(() => {
-    // Hydrate demo role + persisted state after mount (localStorage/cookies are client-only).
     const role = getRoleCookie();
     const user = DEMO_USERS.find((item) => item.role === role) ?? null;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional client hydration
@@ -111,19 +104,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCurrentUser(null);
     }
 
-    function createCustomer(input: CustomerInput) {
-      if (!currentUser || currentUser.role !== "admin") return;
-      const customer = {
-        id: createId("cust"),
-        ...input,
-        createdAt: new Date().toISOString(),
-      };
-      setState((previous) => ({
-        ...previous,
-        customers: [customer, ...previous.customers],
-      }));
-    }
-
     function createOrder(input: CreateOrderInput) {
       if (!currentUser || currentUser.role !== "admin") {
         throw new Error("Only admin can create orders");
@@ -141,7 +121,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         invoiceNumber: input.invoiceNumber,
         invoiceDate: input.invoiceDate,
         deliveryDate: input.deliveryDate,
-        customerId: input.customerId,
+        customerName: input.customerName.trim(),
+        contactPerson: input.contactPerson.trim(),
+        mobile: input.mobile.trim(),
+        address: input.address.trim(),
+        gst: input.gst?.trim() || undefined,
         priority: input.priority,
         notes: input.notes,
         status: "new",
@@ -168,7 +152,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             actorId: currentUser.id,
             actorName: currentUser.name,
             action: "order_created",
-            detail: `Order ${order.orderNumber} created by ${currentUser.name}`,
+            detail: `Order ${order.orderNumber} created by ${currentUser.name} for ${order.customerName}`,
             emoji: "🟢",
           },
         ),
@@ -198,7 +182,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   invoiceNumber: input.invoiceNumber,
                   invoiceDate: input.invoiceDate,
                   deliveryDate: input.deliveryDate,
-                  customerId: input.customerId,
+                  customerName: input.customerName.trim(),
+                  contactPerson: input.contactPerson.trim(),
+                  mobile: input.mobile.trim(),
+                  address: input.address.trim(),
+                  gst: input.gst?.trim() || undefined,
                   priority: input.priority,
                   notes: input.notes,
                   products,
@@ -511,7 +499,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       const payment = {
         id: paymentId,
-        customerId: input.customerId,
+        customerName: input.customerName.trim(),
         invoiceNumber: input.invoiceNumber,
         invoiceDate: input.invoiceDate,
         amount: input.amount,
@@ -523,9 +511,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         createdAt: new Date().toISOString(),
       };
 
-      setState((previous) => {
-        const customer = previous.customers.find((item) => item.id === input.customerId);
-        return pushEvent(
+      setState((previous) =>
+        pushEvent(
           {
             ...previous,
             payments: [payment, ...previous.payments],
@@ -536,11 +523,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             actorId: currentUser.id,
             actorName: currentUser.name,
             action: "payment_collected",
-            detail: `Payment of ₹${input.amount.toLocaleString("en-IN")} collected from ${customer?.name ?? "customer"}`,
+            detail: `Payment of ₹${input.amount.toLocaleString("en-IN")} collected from ${payment.customerName}`,
             emoji: "💰",
           },
-        );
-      });
+        ),
+      );
     }
 
     async function addOrderDocuments(orderId: string, files: File[], kind: DocumentKind) {
@@ -556,32 +543,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }));
     }
 
-    function getCustomer(id: string) {
-      return state.customers.find((customer) => customer.id === id);
-    }
-
     function searchAll(query: string) {
       const search = query.trim().toLowerCase();
-      if (!search) return { customers: [], orders: [] };
+      if (!search) return { orders: [], payments: [] };
 
-      const customers = state.customers.filter(
-        (customer) =>
-          customer.name.toLowerCase().includes(search) ||
-          customer.mobile.includes(search) ||
-          customer.contactPerson.toLowerCase().includes(search),
-      );
-
-      const orders = state.orders.filter((order) => {
-        const customer = state.customers.find((item) => item.id === order.customerId);
-        return (
+      const orders = state.orders.filter(
+        (order) =>
           order.orderNumber.toLowerCase().includes(search) ||
           order.invoiceNumber.toLowerCase().includes(search) ||
-          customer?.name.toLowerCase().includes(search) ||
-          customer?.mobile.includes(search)
-        );
-      });
+          order.customerName.toLowerCase().includes(search) ||
+          order.mobile.includes(search) ||
+          order.contactPerson.toLowerCase().includes(search),
+      );
 
-      return { customers, orders };
+      const payments = state.payments.filter(
+        (payment) =>
+          payment.customerName.toLowerCase().includes(search) ||
+          payment.invoiceNumber.toLowerCase().includes(search),
+      );
+
+      return { orders, payments };
     }
 
     return {
@@ -590,7 +571,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       state,
       login,
       logout,
-      createCustomer,
       createOrder,
       updateOrderBeforePacking,
       acceptOrder,
@@ -602,7 +582,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       completeFullReturn,
       recordPayment,
       addOrderDocuments,
-      getCustomer,
       searchAll,
     };
   }, [currentUser, ready, state]);

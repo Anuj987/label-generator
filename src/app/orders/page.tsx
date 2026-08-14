@@ -23,10 +23,14 @@ const emptyProduct = (): ProductDraft => ({ productName: "", quantity: "1", unit
 
 export default function OrdersPage() {
   const router = useRouter();
-  const { createOrder, currentUser, getCustomer, state } = useAppContext();
+  const { createOrder, currentUser, state } = useAppContext();
   const [query, setQuery] = useState("");
   const [form, setForm] = useState({
-    customerId: "",
+    customerName: "",
+    contactPerson: "",
+    mobile: "",
+    address: "",
+    gst: "",
     invoiceNumber: "",
     invoiceDate: new Date().toISOString().slice(0, 10),
     deliveryDate: new Date().toISOString().slice(0, 10),
@@ -41,23 +45,23 @@ export default function OrdersPage() {
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
     return state.orders.filter((order) => {
-      const customer = getCustomer(order.customerId);
       if (!search) return true;
       return (
         order.orderNumber.toLowerCase().includes(search) ||
         order.invoiceNumber.toLowerCase().includes(search) ||
-        customer?.name.toLowerCase().includes(search) ||
-        customer?.mobile.includes(search)
+        order.customerName.toLowerCase().includes(search) ||
+        order.mobile.includes(search)
       );
     });
-  }, [getCustomer, query, state.orders]);
+  }, [query, state.orders]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.customerId) return;
+    if (!form.customerName.trim()) return;
 
     const order = createOrder({
       ...form,
+      gst: form.gst || undefined,
       notes: form.notes || undefined,
       billingSource: form.billingSource || undefined,
       externalInvoiceId: form.externalInvoiceId || undefined,
@@ -71,6 +75,22 @@ export default function OrdersPage() {
         })),
     });
 
+    setForm({
+      customerName: "",
+      contactPerson: "",
+      mobile: "",
+      address: "",
+      gst: "",
+      invoiceNumber: "",
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      deliveryDate: new Date().toISOString().slice(0, 10),
+      priority: "normal",
+      notes: "",
+      billingSource: "",
+      externalInvoiceId: "",
+      externalCustomerId: "",
+    });
+    setProducts([emptyProduct()]);
     router.push(`/orders/${order.id}`);
   }
 
@@ -90,25 +110,52 @@ export default function OrdersPage() {
       <PageHeader
         eyebrow="Admin"
         title="Orders"
-        description="Create orders after billing. Edit is allowed only while status is New."
+        description="Type the customer name each time. Customer details are saved only on that order."
       />
 
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
         <SectionCard title="Create order">
           <form className="grid gap-4" onSubmit={handleSubmit}>
-            <Select
-              label="Customer"
+            <Input
+              label="Customer name"
               required
-              value={form.customerId}
-              onChange={(event) => setForm((previous) => ({ ...previous, customerId: event.target.value }))}
-            >
-              <option value="">Select customer</option>
-              {state.customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.name}
-                </option>
-              ))}
-            </Select>
+              value={form.customerName}
+              onChange={(event) =>
+                setForm((previous) => ({ ...previous, customerName: event.target.value }))
+              }
+              placeholder="Type customer name"
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="Contact person"
+                required
+                value={form.contactPerson}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, contactPerson: event.target.value }))
+                }
+              />
+              <Input
+                label="Mobile"
+                required
+                value={form.mobile}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, mobile: event.target.value }))
+                }
+              />
+            </div>
+            <TextArea
+              label="Address"
+              required
+              value={form.address}
+              onChange={(event) =>
+                setForm((previous) => ({ ...previous, address: event.target.value }))
+              }
+            />
+            <Input
+              label="GST (optional)"
+              value={form.gst}
+              onChange={(event) => setForm((previous) => ({ ...previous, gst: event.target.value }))}
+            />
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 label="Invoice number"
@@ -211,62 +258,41 @@ export default function OrdersPage() {
               ))}
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input
-                label="Billing source"
-                placeholder="Swipe / Odoo / Zoho / Tally"
-                value={form.billingSource}
-                onChange={(event) =>
-                  setForm((previous) => ({ ...previous, billingSource: event.target.value }))
-                }
-              />
-              <Input
-                label="External invoice ID"
-                value={form.externalInvoiceId}
-                onChange={(event) =>
-                  setForm((previous) => ({ ...previous, externalInvoiceId: event.target.value }))
-                }
-              />
-            </div>
-
             <Button type="submit">Create order</Button>
           </form>
         </SectionCard>
 
-        <SectionCard title="All orders" description="Search by customer, order, invoice, or mobile.">
+        <SectionCard title="All orders" description="Search by customer name, order, invoice, or mobile.">
           <Input
             label="Search orders"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="NT-00125, INV-88921, Patel..."
+            placeholder="Customer name, NT-00001, INV..."
           />
           <div className="mt-4 space-y-3">
-            {filtered.map((order) => {
-              const customer = getCustomer(order.customerId);
-              return (
-                <Link
-                  key={order.id}
-                  href={`/orders/${order.id}`}
-                  className="block rounded-2xl border border-slate-200 bg-slate-50 p-4 hover:bg-white"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-slate-950">{order.orderNumber}</p>
-                      <p className="text-sm text-slate-600">
-                        {customer?.name} · {order.invoiceNumber}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {order.products.length} products · qty {totalQuantity(order.products)} ·{" "}
-                        {PRIORITY_LABELS[order.priority]}
-                      </p>
-                    </div>
-                    <Badge tone="teal">{STATUS_LABELS[order.status]}</Badge>
+            {filtered.map((order) => (
+              <Link
+                key={order.id}
+                href={`/orders/${order.id}`}
+                className="block rounded-2xl border border-slate-200 bg-slate-50 p-4 hover:bg-white"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-950">{order.orderNumber}</p>
+                    <p className="text-sm text-slate-600">
+                      {order.customerName} · {order.invoiceNumber}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {order.products.length} products · qty {totalQuantity(order.products)} ·{" "}
+                      {PRIORITY_LABELS[order.priority]}
+                    </p>
                   </div>
-                </Link>
-              );
-            })}
+                  <Badge tone="teal">{STATUS_LABELS[order.status]}</Badge>
+                </div>
+              </Link>
+            ))}
             {!filtered.length ? (
-              <EmptyState title="No orders found" description="Try another search term." />
+              <EmptyState title="No orders yet" description="Create an order with a manually typed customer name." />
             ) : null}
           </div>
         </SectionCard>

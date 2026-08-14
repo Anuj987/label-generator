@@ -24,7 +24,6 @@ export default function DeliveryPage() {
     completeFullReturn,
     completePartialDelivery,
     currentUser,
-    getCustomer,
     startDelivery,
     state,
   } = useAppContext();
@@ -101,14 +100,13 @@ export default function DeliveryPage() {
 
       <div className="space-y-4">
         {queue.map((order) => {
-          const customer = getCustomer(order.customerId);
           const isActive = activeId === order.id;
 
           return (
             <SectionCard
               key={order.id}
               title={order.orderNumber}
-              description={`${customer?.name} · Invoice ${order.invoiceNumber}`}
+              description={`${order.customerName} · Invoice ${order.invoiceNumber}`}
               actions={<Badge tone={order.priority === "normal" ? "slate" : "amber"}>{PRIORITY_LABELS[order.priority]}</Badge>}
             >
               <div className="mb-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
