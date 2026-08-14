@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutDashboard,
   LogOut,
@@ -12,6 +12,7 @@ import {
   Users,
   Wallet,
   ClipboardList,
+  X,
 } from "lucide-react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Button, Input } from "@/components/ui";
@@ -42,6 +43,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { currentUser, logout, ready, searchAll } = useAppContext();
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!ready) return;
@@ -49,6 +52,31 @@ export function AppShell({ children }: { children: ReactNode }) {
       router.replace("/login");
     }
   }, [currentUser, pathname, ready, router]);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!searchRef.current?.contains(event.target as Node)) {
+        setSearchOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSearchOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    setSearchOpen(false);
+    setQuery("");
+  }, [pathname]);
 
   const links = useMemo(
     () => (currentUser ? NAV[currentUser.role] : []),
@@ -67,6 +95,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!currentUser) return null;
 
   const results = query.trim().length > 1 ? searchAll(query) : null;
+  const showResults = searchOpen && results !== null;
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#d8f3ef,_#eef2f7_45%,_#f8fafc)]">
@@ -113,50 +142,96 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
         </aside>
 
-        <main className="space-y-4 pb-24 lg:pb-8">
-          {currentUser.role === "admin" || currentUser.role === "delivery" || currentUser.role === "packing" ? (
-            <div className="relative">
-              <Input
-                placeholder="Search customer, order, invoice, mobile"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              {results ? (
-                <div className="absolute z-10 mt-2 w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Quick results
-                  </p>
-                  <div className="space-y-2">
-                    {results.orders.slice(0, 4).map((order) => (
-                      <Link
-                        key={order.id}
-                        href={`/orders/${order.id}`}
-                        className="block rounded-xl px-2 py-2 text-sm hover:bg-slate-50"
-                        onClick={() => setQuery("")}
-                      >
-                        {order.orderNumber} · {order.invoiceNumber}
-                      </Link>
-                    ))}
-                    {results.customers.slice(0, 4).map((customer) => (
-                      <Link
-                        key={customer.id}
-                        href="/customers"
-                        className="block rounded-xl px-2 py-2 text-sm hover:bg-slate-50"
-                        onClick={() => setQuery("")}
-                      >
-                        {customer.name} · {customer.mobile}
-                      </Link>
-                    ))}
-                    {!results.orders.length && !results.customers.length ? (
-                      <p className="px-2 py-2 text-sm text-slate-500">No matches</p>
-                    ) : null}
-                  </div>
-                </div>
+        <main className="relative space-y-4 pb-24 lg:pb-8">
+          <div ref={searchRef} className="relative z-30">
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <Input
+                  type="search"
+                  inputMode="search"
+                  autoComplete="off"
+                  placeholder="Search customer, order, invoice, mobile"
+                  value={query}
+                  onFocus={() => setSearchOpen(true)}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setSearchOpen(true);
+                  }}
+                />
+              </div>
+              {query ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setQuery("");
+                    setSearchOpen(false);
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
               ) : null}
             </div>
+            {showResults ? (
+              <div className="absolute left-0 right-0 top-full z-30 mt-2 max-h-72 overflow-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Quick results
+                  </p>
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-slate-500 hover:text-slate-800"
+                    onClick={() => setSearchOpen(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {results.orders.slice(0, 4).map((order) => (
+                    <Link
+                      key={order.id}
+                      href={`/orders/${order.id}`}
+                      className="block rounded-xl px-2 py-2 text-sm hover:bg-slate-50"
+                      onClick={() => {
+                        setQuery("");
+                        setSearchOpen(false);
+                      }}
+                    >
+                      {order.orderNumber} · {order.invoiceNumber}
+                    </Link>
+                  ))}
+                  {results.customers.slice(0, 4).map((customer) => (
+                    <Link
+                      key={customer.id}
+                      href="/customers"
+                      className="block rounded-xl px-2 py-2 text-sm hover:bg-slate-50"
+                      onClick={() => {
+                        setQuery("");
+                        setSearchOpen(false);
+                      }}
+                    >
+                      {customer.name} · {customer.mobile}
+                    </Link>
+                  ))}
+                  {!results.orders.length && !results.customers.length ? (
+                    <p className="px-2 py-2 text-sm text-slate-500">No matches</p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          {showResults ? (
+            <button
+              type="button"
+              aria-label="Dismiss search"
+              className="fixed inset-0 z-20 cursor-default bg-slate-900/10"
+              onClick={() => setSearchOpen(false)}
+            />
           ) : null}
 
-          {children}
+          <div className="relative z-0">{children}</div>
         </main>
       </div>
 

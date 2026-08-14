@@ -93,14 +93,16 @@ export function Button({
 export function Input({
   label,
   className,
+  type = "text",
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { label?: string }) {
   return (
     <label className="grid gap-1.5 text-sm">
       {label ? <span className="font-medium text-slate-700">{label}</span> : null}
       <input
+        type={type}
         className={cx(
-          "rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none ring-teal-600/30 placeholder:text-slate-400 focus:border-teal-600 focus:ring-2",
+          "w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none ring-teal-600/30 placeholder:text-slate-400 focus:border-teal-600 focus:ring-2 sm:text-sm",
           className,
         )}
         {...props}
@@ -119,7 +121,7 @@ export function TextArea({
       {label ? <span className="font-medium text-slate-700">{label}</span> : null}
       <textarea
         className={cx(
-          "min-h-24 rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none ring-teal-600/30 placeholder:text-slate-400 focus:border-teal-600 focus:ring-2",
+          "min-h-24 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none ring-teal-600/30 placeholder:text-slate-400 focus:border-teal-600 focus:ring-2 sm:text-sm",
           className,
         )}
         {...props}
