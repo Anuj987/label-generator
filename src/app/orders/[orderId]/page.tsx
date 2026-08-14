@@ -13,7 +13,7 @@ import {
   Select,
   TextArea,
 } from "@/components/ui";
-import { PRIORITY_LABELS, STATUS_LABELS } from "@/lib/demo-data";
+import { PRIORITY_LABELS, STATUS_LABELS, totalPurchaseCost } from "@/lib/demo-data";
 import { formatDate, formatDateTime } from "@/lib/storage";
 import type { Priority } from "@/lib/types";
 
@@ -45,6 +45,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
       productName: product.productName,
       quantity: String(product.quantity),
       unit: product.unit,
+      purchasePrice:
+        product.purchasePrice !== undefined && product.purchasePrice !== null
+          ? String(product.purchasePrice)
+          : "",
     })) ?? [],
   );
 
@@ -72,6 +76,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         productName: product.productName,
         quantity: Number(product.quantity) || 1,
         unit: product.unit,
+        purchasePrice: product.purchasePrice.trim()
+          ? Number(product.purchasePrice)
+          : undefined,
       })),
     });
     setEditing(false);
@@ -178,7 +185,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                 onChange={(event) => setForm((previous) => ({ ...previous, notes: event.target.value }))}
               />
               {products.map((product, index) => (
-                <div key={index} className="grid gap-2 sm:grid-cols-3">
+                <div key={index} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   <Input
                     label="Product"
                     value={product.productName}
@@ -208,6 +215,22 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                       setProducts((previous) =>
                         previous.map((item, itemIndex) =>
                           itemIndex === index ? { ...item, unit: event.target.value } : item,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    label="Purchase price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={product.purchasePrice}
+                    onChange={(event) =>
+                      setProducts((previous) =>
+                        previous.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? { ...item, purchasePrice: event.target.value }
+                            : item,
                         ),
                       )
                     }
@@ -272,14 +295,25 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
             {order.products.map((product) => (
               <div
                 key={product.id}
-                className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
               >
                 <span className="font-medium text-slate-900">{product.productName}</span>
-                <span className="text-slate-600">
+                <span className="text-right text-slate-600">
                   {product.quantity} {product.unit}
+                  {currentUser.role === "admin" && product.purchasePrice !== undefined ? (
+                    <span className="mt-1 block text-xs text-teal-800">
+                      Purchase ₹{product.purchasePrice.toLocaleString("en-IN")} / {product.unit}
+                    </span>
+                  ) : null}
                 </span>
               </div>
             ))}
+            {currentUser.role === "admin" ? (
+              <p className="pt-2 text-sm font-medium text-slate-800">
+                Total purchase cost: ₹
+                {totalPurchaseCost(order.products).toLocaleString("en-IN")}
+              </p>
+            ) : null}
           </div>
         </SectionCard>
       </div>

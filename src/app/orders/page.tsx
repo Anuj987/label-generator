@@ -17,9 +17,14 @@ import {
 import { PRIORITY_LABELS, STATUS_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
 import type { Priority } from "@/lib/types";
 
-type ProductDraft = { productName: string; quantity: string; unit: string };
+type ProductDraft = { productName: string; quantity: string; unit: string; purchasePrice: string };
 
-const emptyProduct = (): ProductDraft => ({ productName: "", quantity: "1", unit: "kg" });
+const emptyProduct = (): ProductDraft => ({
+  productName: "",
+  quantity: "1",
+  unit: "kg",
+  purchasePrice: "",
+});
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -91,6 +96,9 @@ export default function OrdersPage() {
           productName: product.productName.trim(),
           quantity: Number(product.quantity) || 1,
           unit: product.unit.trim() || "unit",
+          purchasePrice: product.purchasePrice.trim()
+            ? Number(product.purchasePrice)
+            : undefined,
         })),
     });
 
@@ -259,7 +267,7 @@ export default function OrdersPage() {
                 </Button>
               </div>
               {products.map((product, index) => (
-                <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 p-3 sm:grid-cols-3">
+                <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 p-3 sm:grid-cols-2 lg:grid-cols-4">
                   <Input
                     label="Product name"
                     required
@@ -297,6 +305,23 @@ export default function OrdersPage() {
                         ),
                       )
                     }
+                  />
+                  <Input
+                    label="Purchase price (admin)"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={product.purchasePrice}
+                    onChange={(event) =>
+                      setProducts((previous) =>
+                        previous.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? { ...item, purchasePrice: event.target.value }
+                            : item,
+                        ),
+                      )
+                    }
+                    placeholder="₹ per unit"
                   />
                 </div>
               ))}
