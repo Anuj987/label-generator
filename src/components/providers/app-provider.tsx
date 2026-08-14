@@ -20,6 +20,7 @@ import {
 import type {
   AppState,
   CreateOrderInput,
+  CustomerInput,
   DocumentKind,
   Order,
   PartialDeliveryLine,
@@ -35,6 +36,7 @@ type AppContextValue = {
   state: AppState;
   login: (role: Role) => void;
   logout: () => void;
+  createCustomer: (input: CustomerInput) => void;
   createOrder: (input: CreateOrderInput) => Order;
   updateOrderBeforePacking: (orderId: string, input: CreateOrderInput) => void;
   acceptOrder: (orderId: string) => void;
@@ -51,7 +53,11 @@ type AppContextValue = {
   completeFullReturn: (orderId: string, reason: string, files: File[]) => Promise<void>;
   recordPayment: (input: PaymentInput) => Promise<void>;
   addOrderDocuments: (orderId: string, files: File[], kind: DocumentKind) => Promise<void>;
-  searchAll: (query: string) => { orders: AppState["orders"]; payments: AppState["payments"] };
+  searchAll: (query: string) => {
+    customers: AppState["customers"];
+    orders: AppState["orders"];
+    payments: AppState["payments"];
+  };
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -102,6 +108,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     function logout() {
       setRoleCookie(null);
       setCurrentUser(null);
+    }
+
+    function createCustomer(input: CustomerInput) {
+      if (!currentUser || currentUser.role !== "admin") return;
+      const name = input.name.trim();
+      if (!name) return;
+
+      const exists = state.customers.some(
+        (customer) => customer.name.toLowerCase() === name.toLowerCase(),
+      );
+      if (exists) return;
+
+      const customer = {
+        id: createId("cust"),
+        name,
+        mobile: input.mobile?.trim() || undefined,
+        gst: input.gst?.trim() || undefined,
+        notes: input.notes?.trim() || undefined,
+        createdAt: new Date().toISOString(),
+      };
+
+      setState((previous) => ({
+        ...previous,
+        customers: [customer, ...previous.customers],
+      }));
     }
 
     function createOrder(input: CreateOrderInput) {
@@ -545,7 +576,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     function searchAll(query: string) {
       const search = query.trim().toLowerCase();
-      if (!search) return { orders: [], payments: [] };
+      if (!search) return { customers: [], orders: [], payments: [] };
+
+      const customers = state.customers.filter(
+        (customer) =>
+          customer.name.toLowerCase().includes(search) ||
+          (customer.mobile ?? "").includes(search) ||
+          (customer.gst ?? "").toLowerCase().includes(search),
+      );
 
       const orders = state.orders.filter(
         (order) =>
@@ -562,7 +600,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           payment.invoiceNumber.toLowerCase().includes(search),
       );
 
-      return { orders, payments };
+      return { customers, orders, payments };
     }
 
     return {
@@ -571,6 +609,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       state,
       login,
       logout,
+      createCustomer,
       createOrder,
       updateOrderBeforePacking,
       acceptOrder,

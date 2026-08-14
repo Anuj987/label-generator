@@ -10,7 +10,10 @@ import { formatCurrency } from "@/lib/storage";
 export default function SearchPage() {
   const { currentUser, searchAll } = useAppContext();
   const [query, setQuery] = useState("");
-  const results = query.trim().length > 1 ? searchAll(query) : { orders: [], payments: [] };
+  const results =
+    query.trim().length > 1
+      ? searchAll(query)
+      : { customers: [], orders: [], payments: [] };
 
   if (!currentUser) return null;
 
@@ -31,7 +34,7 @@ export default function SearchPage() {
         />
       </SectionCard>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-3">
         <SectionCard title="Orders">
           <div className="space-y-2">
             {results.orders.map((order) => (
@@ -43,7 +46,7 @@ export default function SearchPage() {
                 <div>
                   <p className="font-medium text-slate-900">{order.orderNumber}</p>
                   <p className="text-sm text-slate-600">
-                    {order.customerName} · {order.invoiceNumber}
+                    {order.customerName} · {order.deliveryDate}
                   </p>
                 </div>
                 <Badge tone="teal">{STATUS_LABELS[order.status]}</Badge>
@@ -51,6 +54,22 @@ export default function SearchPage() {
             ))}
             {query.trim().length > 1 && !results.orders.length ? (
               <EmptyState title="No matching orders" />
+            ) : null}
+          </div>
+        </SectionCard>
+
+        <SectionCard title="Customers">
+          <div className="space-y-2">
+            {results.customers.map((customer) => (
+              <div key={customer.id} className="rounded-2xl border border-slate-200 px-3 py-3">
+                <p className="font-medium text-slate-900">{customer.name}</p>
+                <p className="text-sm text-slate-600">
+                  {[customer.mobile, customer.gst].filter(Boolean).join(" · ") || "—"}
+                </p>
+              </div>
+            ))}
+            {query.trim().length > 1 && !results.customers.length ? (
+              <EmptyState title="No matching customers" />
             ) : null}
           </div>
         </SectionCard>

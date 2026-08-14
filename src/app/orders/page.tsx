@@ -14,7 +14,7 @@ import {
   Select,
   TextArea,
 } from "@/components/ui";
-import { PRIORITY_LABELS, STATUS_LABELS, totalQuantity } from "@/lib/demo-data";
+import { PRIORITY_LABELS, STATUS_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
 import type { Priority } from "@/lib/types";
 
 type ProductDraft = { productName: string; quantity: string; unit: string };
@@ -44,16 +44,35 @@ export default function OrdersPage() {
 
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
-    return state.orders.filter((order) => {
-      if (!search) return true;
-      return (
+    const list = sortOrdersByDelivery(state.orders);
+    if (!search) return list;
+    return list.filter(
+      (order) =>
         order.orderNumber.toLowerCase().includes(search) ||
         order.invoiceNumber.toLowerCase().includes(search) ||
         order.customerName.toLowerCase().includes(search) ||
-        order.mobile.includes(search)
-      );
-    });
+        order.mobile.includes(search),
+    );
   }, [query, state.orders]);
+
+  const suggestions = useMemo(() => {
+    const search = form.customerName.trim().toLowerCase();
+    if (search.length < 1) return [];
+    return state.customers
+      .filter((customer) => customer.name.toLowerCase().includes(search))
+      .slice(0, 8);
+  }, [form.customerName, state.customers]);
+
+  function applyCustomerSuggestion(name: string) {
+    const match = state.customers.find((customer) => customer.name === name);
+    setForm((previous) => ({
+      ...previous,
+      customerName: name,
+      contactPerson: previous.contactPerson || name,
+      mobile: match?.mobile || previous.mobile,
+      gst: match?.gst || previous.gst,
+    }));
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -116,15 +135,40 @@ export default function OrdersPage() {
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
         <SectionCard title="Create order">
           <form className="grid gap-4" onSubmit={handleSubmit}>
-            <Input
-              label="Customer name"
-              required
-              value={form.customerName}
-              onChange={(event) =>
-                setForm((previous) => ({ ...previous, customerName: event.target.value }))
-              }
-              placeholder="Type customer name"
-            />
+            <div className="relative">
+              <Input
+                label="Customer name"
+                required
+                list="customer-suggestions"
+                value={form.customerName}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, customerName: event.target.value }))
+                }
+                placeholder="Type name — suggestions appear from your list"
+              />
+              <datalist id="customer-suggestions">
+                {state.customers.map((customer) => (
+                  <option key={customer.id} value={customer.name} />
+                ))}
+              </datalist>
+              {suggestions.length ? (
+                <div className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+                  {suggestions.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-50"
+                      onClick={() => applyCustomerSuggestion(customer.name)}
+                    >
+                      <span className="font-medium text-slate-900">{customer.name}</span>
+                      {customer.mobile ? (
+                        <span className="ml-2 text-slate-500">{customer.mobile}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 label="Contact person"
@@ -262,7 +306,7 @@ export default function OrdersPage() {
           </form>
         </SectionCard>
 
-        <SectionCard title="All orders" description="Search by customer name, order, invoice, or mobile.">
+        <SectionCard title="All orders" description="Today’s delivery date orders stay on top.">
           <Input
             label="Search orders"
             value={query}
@@ -283,8 +327,8 @@ export default function OrdersPage() {
                       {order.customerName} · {order.invoiceNumber}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {order.products.length} products · qty {totalQuantity(order.products)} ·{" "}
-                      {PRIORITY_LABELS[order.priority]}
+                      Delivery {order.deliveryDate} · {order.products.length} products · qty{" "}
+                      {totalQuantity(order.products)} · {PRIORITY_LABELS[order.priority]}
                     </p>
                   </div>
                   <Badge tone="teal">{STATUS_LABELS[order.status]}</Badge>

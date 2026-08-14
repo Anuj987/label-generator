@@ -109,12 +109,18 @@ export default function PaymentsPage() {
             <Input
               label="Customer name"
               required
+              list="payment-customer-suggestions"
               value={form.customerName}
               onChange={(event) =>
                 setForm((previous) => ({ ...previous, customerName: event.target.value }))
               }
               placeholder="Type customer name"
             />
+            <datalist id="payment-customer-suggestions">
+              {state.customers.map((customer) => (
+                <option key={customer.id} value={customer.name} />
+              ))}
+            </datalist>
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 label="Invoice number"

@@ -5,6 +5,7 @@ import type {
   Role,
   UserProfile,
 } from "@/lib/types";
+import { SEED_CUSTOMERS } from "@/lib/seed-customers";
 
 export const DEMO_USERS: UserProfile[] = [
   { id: "user-admin", name: "Anuj", role: "admin" },
@@ -66,8 +67,37 @@ export function totalQuantity(products: OrderProduct[]) {
   return products.reduce((sum, product) => sum + product.quantity, 0);
 }
 
+export function todayDateString(day = new Date()) {
+  const year = day.getFullYear();
+  const month = String(day.getMonth() + 1).padStart(2, "0");
+  const date = String(day.getDate()).padStart(2, "0");
+  return `${year}-${month}-${date}`;
+}
+
+/** Today's delivery orders first, then soonest delivery date, then newest created. */
+export function sortOrdersByDelivery<T extends { deliveryDate: string; createdAt: string }>(
+  orders: T[],
+  today = todayDateString(),
+) {
+  return [...orders].sort((a, b) => {
+    const aToday = a.deliveryDate === today ? 0 : 1;
+    const bToday = b.deliveryDate === today ? 0 : 1;
+    if (aToday !== bToday) return aToday - bToday;
+    if (a.deliveryDate !== b.deliveryDate) return a.deliveryDate.localeCompare(b.deliveryDate);
+    return b.createdAt.localeCompare(a.createdAt);
+  });
+}
+
 export function createInitialState(): AppState {
+  const now = new Date().toISOString();
   return {
+    customers: SEED_CUSTOMERS.map((customer, index) => ({
+      id: `seed-cust-${index + 1}`,
+      name: customer.name,
+      mobile: customer.mobile,
+      gst: customer.gst,
+      createdAt: now,
+    })),
     orders: [],
     payments: [],
     auditEvents: [],

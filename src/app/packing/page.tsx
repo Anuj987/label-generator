@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Badge, Button, EmptyState, PageHeader, SectionCard } from "@/components/ui";
-import { PRIORITY_LABELS, totalQuantity } from "@/lib/demo-data";
+import { PRIORITY_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
 import { formatDate } from "@/lib/storage";
 
 export default function PackingPage() {
@@ -17,7 +17,10 @@ export default function PackingPage() {
   } = useAppContext();
 
   const queue = useMemo(
-    () => state.orders.filter((order) => order.status === "new" || order.status === "packing"),
+    () =>
+      sortOrdersByDelivery(
+        state.orders.filter((order) => order.status === "new" || order.status === "packing"),
+      ),
     [state.orders],
   );
 
