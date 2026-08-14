@@ -74,8 +74,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    setSearchOpen(false);
-    setQuery("");
+    // Reset search UI on navigation without blocking the next paint.
+    const frame = window.requestAnimationFrame(() => {
+      setSearchOpen(false);
+      setQuery("");
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [pathname]);
 
   const links = useMemo(
