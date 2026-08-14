@@ -150,7 +150,7 @@ export default function CustomersPage() {
           </form>
         </SectionCard>
 
-        <SectionCard title="Customer list" description="Search results update as you type.">
+        <SectionCard title="Customer list" description="Add customers manually — nothing is preloaded.">
           <Input
             label="Instant search"
             placeholder="Search by name, person, or mobile"
@@ -186,8 +186,12 @@ export default function CustomersPage() {
               ))
             ) : (
               <EmptyState
-                title="No matching customers"
-                description="Try a different name, number, or contact person."
+                title={query.trim() ? "No matching customers" : "No customers yet"}
+                description={
+                  query.trim()
+                    ? "Try a different name, number, or contact person."
+                    : "Use the form on the left to add your first customer."
+                }
               />
             )}
           </div>
