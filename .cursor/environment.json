@@ -1,0 +1,16 @@
+{
+  "name": "Label Generator",
+  "install": "./.cursor/install.sh",
+  "terminals": [
+    {
+      "name": "web-server",
+      "command": "python3 -m http.server 8000 --bind 0.0.0.0"
+    }
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 8000
+    }
+  ]
+}
