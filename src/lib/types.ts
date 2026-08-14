@@ -30,6 +30,16 @@ export type UserProfile = {
   role: Role;
 };
 
+/** Optional directory for quick pick — orders still store typed name fields. */
+export type Customer = {
+  id: string;
+  name: string;
+  mobile?: string;
+  gst?: string;
+  notes?: string;
+  createdAt: string;
+};
+
 export type OrderProduct = {
   id: string;
   productName: string;
@@ -128,10 +138,18 @@ export type AuditEvent = {
 };
 
 export type AppState = {
+  customers: Customer[];
   orders: Order[];
   payments: Payment[];
   auditEvents: AuditEvent[];
   nextOrderSequence: number;
+};
+
+export type CustomerInput = {
+  name: string;
+  mobile?: string;
+  gst?: string;
+  notes?: string;
 };
 
 export type OrderProductInput = {

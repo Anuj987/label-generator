@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Badge, EmptyState, PageHeader, SectionCard, StatCard } from "@/components/ui";
-import { STATUS_LABELS } from "@/lib/demo-data";
+import { STATUS_LABELS, sortOrdersByDelivery } from "@/lib/demo-data";
 import { formatCurrency, formatDateTime, isSameDay } from "@/lib/storage";
 
 export default function DashboardPage() {
@@ -30,6 +30,8 @@ export default function DashboardPage() {
       paymentsToday,
     };
   }, [state.orders, state.payments]);
+
+  const recentOrders = useMemo(() => sortOrdersByDelivery(state.orders).slice(0, 8), [state.orders]);
 
   if (!currentUser) return null;
 
@@ -83,9 +85,9 @@ export default function DashboardPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Recent orders">
+      <SectionCard title="Orders by delivery date" description="Today’s deliveries stay on top.">
         <div className="space-y-3">
-          {state.orders.slice(0, 6).map((order) => (
+          {recentOrders.map((order) => (
             <Link
               key={order.id}
               href={`/orders/${order.id}`}
@@ -94,13 +96,13 @@ export default function DashboardPage() {
               <div>
                 <p className="font-semibold text-slate-900">{order.orderNumber}</p>
                 <p className="text-sm text-slate-600">
-                  {order.customerName} · {order.invoiceNumber}
+                  {order.customerName} · Delivery {order.deliveryDate}
                 </p>
               </div>
               <Badge tone="teal">{STATUS_LABELS[order.status]}</Badge>
             </Link>
           ))}
-          {!state.orders.length ? (
+          {!recentOrders.length ? (
             <EmptyState title="No orders yet" description="Create orders from the Orders page." />
           ) : null}
         </div>

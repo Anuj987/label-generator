@@ -1,7 +1,7 @@
 import type { AppState, Role } from "@/lib/types";
 import { createInitialState } from "@/lib/demo-data";
 
-const STORAGE_KEY = "nt-operations-console-v3";
+const STORAGE_KEY = "nt-operations-console-v4";
 const ROLE_COOKIE = "nt_role";
 
 export function loadState(): AppState {

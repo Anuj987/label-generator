@@ -12,7 +12,7 @@ import {
   SectionCard,
   TextArea,
 } from "@/components/ui";
-import { PRIORITY_LABELS, totalQuantity } from "@/lib/demo-data";
+import { PRIORITY_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
 import { formatDate } from "@/lib/storage";
 import type { PartialDeliveryLine } from "@/lib/types";
 
@@ -30,8 +30,10 @@ export default function DeliveryPage() {
 
   const queue = useMemo(
     () =>
-      state.orders.filter(
-        (order) => order.status === "ready" || order.status === "out_for_delivery",
+      sortOrdersByDelivery(
+        state.orders.filter(
+          (order) => order.status === "ready" || order.status === "out_for_delivery",
+        ),
       ),
     [state.orders],
   );
