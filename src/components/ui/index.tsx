@@ -46,18 +46,31 @@ export function SectionCard({
   description,
   children,
   actions,
+  className,
+  titleClassName,
 }: {
   title?: string;
   description?: string;
   children: ReactNode;
   actions?: ReactNode;
+  className?: string;
+  titleClassName?: string;
 }) {
   return (
-    <section className="rounded-3xl border border-slate-200/80 bg-white/90 p-4 shadow-sm shadow-slate-200/60 sm:p-5">
+    <section
+      className={cx(
+        "rounded-3xl border border-slate-200/80 bg-white/90 p-4 shadow-sm shadow-slate-200/60 sm:p-5",
+        className,
+      )}
+    >
       {(title || actions) && (
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            {title ? <h2 className="text-base font-semibold text-slate-900">{title}</h2> : null}
+            {title ? (
+              <h2 className={cx("text-base font-semibold text-slate-900", titleClassName)}>
+                {title}
+              </h2>
+            ) : null}
             {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
           </div>
           {actions}

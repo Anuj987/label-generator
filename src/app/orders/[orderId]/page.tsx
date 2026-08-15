@@ -45,6 +45,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
       productName: product.productName,
       quantity: String(product.quantity),
       unit: product.unit,
+      description: product.description ?? "",
       purchasePrice:
         product.purchasePrice !== undefined && product.purchasePrice !== null
           ? String(product.purchasePrice)
@@ -76,6 +77,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         productName: product.productName,
         quantity: Number(product.quantity) || 1,
         unit: product.unit,
+        description: product.description.trim() || undefined,
         purchasePrice: product.purchasePrice.trim()
           ? Number(product.purchasePrice)
           : undefined,
@@ -185,56 +187,74 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                 onChange={(event) => setForm((previous) => ({ ...previous, notes: event.target.value }))}
               />
               {products.map((product, index) => (
-                <div key={index} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  <Input
-                    label="Product"
-                    value={product.productName}
-                    onChange={(event) =>
-                      setProducts((previous) =>
-                        previous.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, productName: event.target.value } : item,
-                        ),
-                      )
-                    }
-                  />
-                  <Input
-                    label="Qty"
-                    value={product.quantity}
-                    onChange={(event) =>
-                      setProducts((previous) =>
-                        previous.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, quantity: event.target.value } : item,
-                        ),
-                      )
-                    }
-                  />
-                  <Input
-                    label="Unit"
-                    value={product.unit}
-                    onChange={(event) =>
-                      setProducts((previous) =>
-                        previous.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, unit: event.target.value } : item,
-                        ),
-                      )
-                    }
-                  />
-                  <Input
-                    label="Purchase price"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={product.purchasePrice}
-                    onChange={(event) =>
-                      setProducts((previous) =>
-                        previous.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, purchasePrice: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
+                <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 p-3">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Input
+                      label="Product"
+                      value={product.productName}
+                      onChange={(event) =>
+                        setProducts((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, productName: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    <Input
+                      label="Qty"
+                      value={product.quantity}
+                      onChange={(event) =>
+                        setProducts((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, quantity: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    <Input
+                      label="Unit"
+                      value={product.unit}
+                      onChange={(event) =>
+                        setProducts((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index ? { ...item, unit: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Input
+                      label="Purchase price"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={product.purchasePrice}
+                      onChange={(event) =>
+                        setProducts((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, purchasePrice: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                    <TextArea
+                      label="Product description"
+                      rows={2}
+                      value={product.description}
+                      onChange={(event) =>
+                        setProducts((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, description: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
                 </div>
               ))}
               <Button type="submit">Save changes</Button>
@@ -295,17 +315,22 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
             {order.products.map((product) => (
               <div
                 key={product.id}
-                className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
               >
-                <span className="font-medium text-slate-900">{product.productName}</span>
-                <span className="text-right text-slate-600">
-                  {product.quantity} {product.unit}
-                  {currentUser.role === "admin" && product.purchasePrice !== undefined ? (
-                    <span className="mt-1 block text-xs text-teal-800">
-                      Purchase ₹{product.purchasePrice.toLocaleString("en-IN")} / {product.unit}
-                    </span>
-                  ) : null}
-                </span>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="font-medium text-slate-900">{product.productName}</span>
+                  <span className="shrink-0 text-right text-slate-600">
+                    {product.quantity} {product.unit}
+                  </span>
+                </div>
+                {product.description ? (
+                  <p className="mt-1 text-slate-600">{product.description}</p>
+                ) : null}
+                {currentUser.role === "admin" && product.purchasePrice !== undefined ? (
+                  <p className="mt-1 text-xs text-teal-800">
+                    Purchase ₹{product.purchasePrice.toLocaleString("en-IN")} / {product.unit}
+                  </p>
+                ) : null}
               </div>
             ))}
             {currentUser.role === "admin" ? (
