@@ -12,6 +12,7 @@ import {
   Users,
   Wallet,
   ClipboardList,
+  Download,
   X,
 } from "lucide-react";
 import { useAppContext } from "@/components/providers/app-provider";
@@ -25,6 +26,7 @@ const NAV: Record<Role, Array<{ href: string; label: string; icon: typeof Users 
     { href: "/customers", label: "Customers", icon: Users },
     { href: "/orders", label: "Orders", icon: ClipboardList },
     { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/export", label: "Export", icon: Download },
     { href: "/search", label: "Search", icon: Search },
   ],
   packing: [
