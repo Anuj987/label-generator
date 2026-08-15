@@ -106,11 +106,11 @@ export default function OrdersPage() {
     setCustomerMenuOpen(false);
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form.customerName.trim()) return;
 
-    const order = createOrder({
+    const order = await createOrder({
       ...form,
       gst: form.gst || undefined,
       notes: form.notes || undefined,

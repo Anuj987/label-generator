@@ -3,12 +3,13 @@
 import {
   createContext,
   ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
 } from "react";
-import { DEMO_USERS, createId, formatOrderNumber, generatePackingChecklist } from "@/lib/demo-data";
+import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import {
   fileToDataUrl,
   getRoleCookie,
@@ -17,6 +18,20 @@ import {
   saveState,
   setRoleCookie,
 } from "@/lib/storage";
+import { supabaseConfigured } from "@/lib/supabase";
+import {
+  SUPABASE_USERS,
+  createLiveCustomer,
+  createLiveOrder,
+  createLivePayment,
+  loadLiveState,
+  persistChecklistCompletion,
+  subscribeLiveChanges,
+  updateLiveOrderBeforePacking,
+  updateLiveOrderItemsQuantities,
+  updateLiveOrderStatus,
+  userForRole,
+} from "@/lib/supabase-data";
 import type {
   AppState,
   CreateOrderInput,
@@ -32,17 +47,19 @@ import type {
 
 type AppContextValue = {
   ready: boolean;
+  liveMode: boolean;
   currentUser: UserProfile | null;
   state: AppState;
   login: (role: Role) => void;
   logout: () => void;
-  createCustomer: (input: CustomerInput) => void;
-  createOrder: (input: CreateOrderInput) => Order;
-  updateOrderBeforePacking: (orderId: string, input: CreateOrderInput) => void;
-  acceptOrder: (orderId: string) => void;
+  refreshLive: () => Promise<void>;
+  createCustomer: (input: CustomerInput) => Promise<void>;
+  createOrder: (input: CreateOrderInput) => Promise<Order>;
+  updateOrderBeforePacking: (orderId: string, input: CreateOrderInput) => Promise<void>;
+  acceptOrder: (orderId: string) => Promise<void>;
   toggleChecklistItem: (orderId: string, itemId: string) => void;
-  markReadyForDelivery: (orderId: string) => void;
-  startDelivery: (orderId: string) => void;
+  markReadyForDelivery: (orderId: string) => Promise<void>;
+  startDelivery: (orderId: string) => Promise<void>;
   completeDelivered: (orderId: string, files: File[], notes?: string) => Promise<void>;
   completePartialDelivery: (
     orderId: string,
@@ -80,27 +97,67 @@ function pushEvent(
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const liveMode = supabaseConfigured;
   const [ready, setReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [state, setState] = useState<AppState>(() => loadState());
 
-  useEffect(() => {
-    const role = getRoleCookie();
-    const user = DEMO_USERS.find((item) => item.role === role) ?? null;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional client hydration
-    setCurrentUser(user);
-    setState(loadState());
-    setReady(true);
-  }, []);
+  const refreshLive = useCallback(async () => {
+    if (!liveMode) return;
+    const live = await loadLiveState();
+    setState(live);
+  }, [liveMode]);
 
   useEffect(() => {
-    if (!ready) return;
+    let cancelled = false;
+
+    async function boot() {
+      const role = getRoleCookie();
+      const user = role
+        ? liveMode
+          ? userForRole(role)
+          : SUPABASE_USERS.find((item) => item.role === role) ?? null
+        : null;
+      if (!cancelled) setCurrentUser(user);
+
+      try {
+        if (liveMode) {
+          const live = await loadLiveState();
+          if (!cancelled) setState(live);
+        } else if (!cancelled) {
+          setState(loadState());
+        }
+      } catch (error) {
+        console.error("Failed to load live Supabase data", error);
+        if (!cancelled) setState(loadState());
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    }
+
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, [liveMode]);
+
+  useEffect(() => {
+    if (!ready || liveMode) return;
     saveState(state);
-  }, [ready, state]);
+  }, [ready, state, liveMode]);
+
+  useEffect(() => {
+    if (!liveMode || !ready) return;
+    return subscribeLiveChanges(() => {
+      void refreshLive();
+    });
+  }, [liveMode, ready, refreshLive]);
 
   const value = useMemo<AppContextValue>(() => {
     function login(role: Role) {
-      const user = DEMO_USERS.find((item) => item.role === role) ?? null;
+      const user = liveMode
+        ? userForRole(role)
+        : SUPABASE_USERS.find((item) => item.role === role) ?? null;
       setRoleCookie(role);
       setCurrentUser(user);
     }
@@ -110,41 +167,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCurrentUser(null);
     }
 
-    function createCustomer(input: CustomerInput) {
+    async function createCustomer(input: CustomerInput) {
       if (!currentUser || currentUser.role !== "admin") return;
+      if (liveMode) {
+        await createLiveCustomer(input);
+        await refreshLive();
+        return;
+      }
       const name = input.name.trim();
       if (!name) return;
-
       const exists = state.customers.some(
         (customer) => customer.name.toLowerCase() === name.toLowerCase(),
       );
       if (exists) return;
-
-      const customer = {
-        id: createId("cust"),
-        name,
-        mobile: input.mobile?.trim() || undefined,
-        gst: input.gst?.trim() || undefined,
-        notes: input.notes?.trim() || undefined,
-        createdAt: new Date().toISOString(),
-      };
-
       setState((previous) => ({
         ...previous,
-        customers: [customer, ...previous.customers],
+        customers: [
+          {
+            id: createId("cust"),
+            name,
+            mobile: input.mobile?.trim() || undefined,
+            gst: input.gst?.trim() || undefined,
+            notes: input.notes?.trim() || undefined,
+            createdAt: new Date().toISOString(),
+          },
+          ...previous.customers,
+        ],
       }));
     }
 
-    function createOrder(input: CreateOrderInput) {
+    async function createOrder(input: CreateOrderInput) {
       if (!currentUser || currentUser.role !== "admin") {
         throw new Error("Only admin can create orders");
+      }
+
+      if (liveMode) {
+        const order = await createLiveOrder(input, currentUser, state.orders);
+        await refreshLive();
+        return order;
       }
 
       const products = input.products.map((product) => ({
         id: createId("prod"),
         ...product,
       }));
-      const orderNumber = formatOrderNumber(state.nextOrderSequence);
+      const orderNumber = `NT-${String(state.nextOrderSequence).padStart(5, "0")}`;
       const now = new Date().toISOString();
       const order: Order = {
         id: createId("ord"),
@@ -192,18 +259,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return order;
     }
 
-    function updateOrderBeforePacking(orderId: string, input: CreateOrderInput) {
+    async function updateOrderBeforePacking(orderId: string, input: CreateOrderInput) {
       if (!currentUser || currentUser.role !== "admin") return;
+      if (liveMode) {
+        await updateLiveOrderBeforePacking(orderId, input);
+        await refreshLive();
+        return;
+      }
 
       setState((previous) => {
         const existing = previous.orders.find((order) => order.id === orderId);
         if (!existing || existing.status !== "new") return previous;
-
         const products = input.products.map((product) => ({
           id: createId("prod"),
           ...product,
         }));
-
         return {
           ...previous,
           orders: previous.orders.map((order) =>
@@ -222,9 +292,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   notes: input.notes,
                   products,
                   packingChecklist: generatePackingChecklist(products),
-                  billingSource: input.billingSource,
-                  externalInvoiceId: input.externalInvoiceId || input.invoiceNumber,
-                  externalCustomerId: input.externalCustomerId,
                   updatedAt: new Date().toISOString(),
                 }
               : order,
@@ -233,14 +300,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    function acceptOrder(orderId: string) {
+    async function acceptOrder(orderId: string) {
       if (!currentUser || currentUser.role !== "packing") return;
       const now = new Date().toISOString();
-
+      if (liveMode) {
+        await updateLiveOrderStatus(orderId, "packing", { packing_started_at: now });
+        await refreshLive();
+        return;
+      }
       setState((previous) => {
         const target = previous.orders.find((order) => order.id === orderId);
         if (!target || target.status !== "new") return previous;
-
         return pushEvent(
           {
             ...previous,
@@ -270,34 +340,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     function toggleChecklistItem(orderId: string, itemId: string) {
       if (!currentUser || currentUser.role !== "packing") return;
-
       setState((previous) => ({
         ...previous,
         orders: previous.orders.map((order) => {
           if (order.id !== orderId || order.status !== "packing") return order;
+          const nextChecklist = order.packingChecklist.map((item) => {
+            if (item.id !== itemId) return item;
+            const completed = !item.completed;
+            persistChecklistCompletion(orderId, item.id, completed);
+            if (item.productId) {
+              persistChecklistCompletion(orderId, `product:${item.productId}`, completed);
+            }
+            return { ...item, completed };
+          });
           return {
             ...order,
-            packingChecklist: order.packingChecklist.map((item) =>
-              item.id === itemId ? { ...item, completed: !item.completed } : item,
-            ),
+            packingChecklist: nextChecklist,
             updatedAt: new Date().toISOString(),
           };
         }),
       }));
     }
 
-    function markReadyForDelivery(orderId: string) {
+    async function markReadyForDelivery(orderId: string) {
       if (!currentUser || currentUser.role !== "packing") return;
       const now = new Date().toISOString();
+      const target = state.orders.find((order) => order.id === orderId);
+      if (!target || target.status !== "packing") return;
+      if (!target.packingChecklist.every((item) => item.completed)) return;
 
-      setState((previous) => {
-        const target = previous.orders.find((order) => order.id === orderId);
-        if (!target || target.status !== "packing") return previous;
-        if (!target.packingChecklist.every((item) => item.completed)) return previous;
+      if (liveMode) {
+        await updateLiveOrderStatus(orderId, "ready", { packing_completed_at: now });
+        await refreshLive();
+        return;
+      }
 
-        const duration = minutesBetween(target.packingStartTime, now);
-
-        return pushEvent(
+      const duration = minutesBetween(target.packingStartTime, now);
+      setState((previous) =>
+        pushEvent(
           {
             ...previous,
             orders: previous.orders.map((order) =>
@@ -320,18 +400,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
             detail: `${currentUser.name} marked ${target.orderNumber} Ready for Delivery`,
             emoji: "📦",
           },
-        );
-      });
+        ),
+      );
     }
 
-    function startDelivery(orderId: string) {
+    async function startDelivery(orderId: string) {
       if (!currentUser || currentUser.role !== "delivery") return;
       const now = new Date().toISOString();
-
+      if (liveMode) {
+        await updateLiveOrderStatus(orderId, "out_for_delivery", { delivery_started_at: now });
+        await refreshLive();
+        return;
+      }
       setState((previous) => {
         const target = previous.orders.find((order) => order.id === orderId);
         if (!target || target.status !== "ready") return previous;
-
         return pushEvent(
           {
             ...previous,
@@ -384,10 +467,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const now = new Date().toISOString();
       const docs = await filesToDocuments(files, "signed_bill", { orderId });
 
+      if (liveMode) {
+        await updateLiveOrderStatus(orderId, "delivered", {
+          delivery_completed_at: now,
+          delivery_instructions: notes || null,
+        });
+        await refreshLive();
+        return;
+      }
+
       setState((previous) => {
         const target = previous.orders.find((order) => order.id === orderId);
         if (!target || target.status !== "out_for_delivery") return previous;
-
         let next = pushEvent(
           {
             ...previous,
@@ -413,7 +504,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             emoji: "🚚",
           },
         );
-
         if (docs.length) {
           next = pushEvent(next, {
             orderId,
@@ -424,7 +514,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             emoji: "📄",
           });
         }
-
         return next;
       });
     }
@@ -439,10 +528,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const now = new Date().toISOString();
       const docs = await filesToDocuments(files, "return_photo", { orderId });
 
+      if (liveMode) {
+        await updateLiveOrderItemsQuantities(lines);
+        await updateLiveOrderStatus(orderId, "partial_delivery", {
+          delivery_completed_at: now,
+          delivery_instructions: notes || null,
+        });
+        await refreshLive();
+        return;
+      }
+
       setState((previous) => {
         const target = previous.orders.find((order) => order.id === orderId);
         if (!target || target.status !== "out_for_delivery") return previous;
-
         return pushEvent(
           {
             ...previous,
@@ -477,10 +575,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const now = new Date().toISOString();
       const docs = await filesToDocuments(files, "return_photo", { orderId });
 
+      if (liveMode) {
+        await updateLiveOrderStatus(orderId, "full_return", {
+          delivery_completed_at: now,
+          return_reason: reason,
+        });
+        await refreshLive();
+        return;
+      }
+
       setState((previous) => {
         const target = previous.orders.find((order) => order.id === orderId);
         if (!target || target.status !== "out_for_delivery") return previous;
-
         return pushEvent(
           {
             ...previous,
@@ -512,6 +618,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async function recordPayment(input: PaymentInput) {
       if (!currentUser) return;
       if (currentUser.role === "packing") return;
+
+      if (liveMode) {
+        await createLivePayment(input, currentUser);
+        await refreshLive();
+        return;
+      }
 
       const paymentId = createId("pay");
       const docs: UploadedFile[] = [];
@@ -568,7 +680,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...previous,
         orders: previous.orders.map((order) =>
           order.id === orderId
-            ? { ...order, documents: [...docs, ...order.documents], updatedAt: new Date().toISOString() }
+            ? {
+                ...order,
+                documents: [...docs, ...order.documents],
+                updatedAt: new Date().toISOString(),
+              }
             : order,
         ),
       }));
@@ -605,10 +721,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return {
       ready,
+      liveMode,
       currentUser,
       state,
       login,
       logout,
+      refreshLive,
       createCustomer,
       createOrder,
       updateOrderBeforePacking,
@@ -623,7 +741,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addOrderDocuments,
       searchAll,
     };
-  }, [currentUser, ready, state]);
+  }, [currentUser, liveMode, ready, refreshLive, state]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

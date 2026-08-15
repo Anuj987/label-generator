@@ -66,10 +66,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
 
   const canEdit = currentUser.role === "admin" && order.status === "new";
 
-  function saveEdit(event: FormEvent) {
+  async function saveEdit(event: FormEvent) {
     event.preventDefault();
     if (!order) return;
-    updateOrderBeforePacking(order.id, {
+    await updateOrderBeforePacking(order.id, {
       ...form,
       gst: form.gst || undefined,
       notes: form.notes || undefined,

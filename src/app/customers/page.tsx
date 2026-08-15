@@ -33,9 +33,9 @@ export default function CustomersPage() {
     );
   }, [query, state.customers]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    createCustomer({
+    await createCustomer({
       name: form.name,
       mobile: form.mobile || undefined,
       gst: form.gst || undefined,
