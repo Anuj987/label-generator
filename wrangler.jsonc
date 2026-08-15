@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "national-traders-console",
+  "account_id": "40da69f538ac9f697632e52f4995d29c",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -14,6 +15,7 @@
       "service": "national-traders-console"
     }
   ],
+  "workers_dev": true,
   "observability": {
     "enabled": true
   }
