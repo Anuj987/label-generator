@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Button, SectionCard } from "@/components/ui";
-import { DEMO_USERS, ROLE_LABELS } from "@/lib/demo-data";
+import { ROLE_LABELS } from "@/lib/demo-data";
+import { SUPABASE_USERS } from "@/lib/supabase-data";
 import type { Role } from "@/lib/types";
 
 const HOME: Record<Role, string> = {
@@ -15,7 +16,7 @@ const HOME: Record<Role, string> = {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, currentUser } = useAppContext();
+  const { login, currentUser, liveMode } = useAppContext();
 
   useEffect(() => {
     if (currentUser) router.replace(HOME[currentUser.role]);
@@ -32,13 +33,15 @@ export default function LoginPage() {
             Operations Console
           </h1>
           <p className="mt-2 text-sm text-slate-600">
-            Demo login by role. Swap to Supabase Auth when credentials are ready.
+            {liveMode
+              ? "Live mode — orders and payments sync to Supabase for the whole team."
+              : "Demo login by role. Connect Supabase for shared live data."}
           </p>
         </div>
 
         <SectionCard title="Choose role" description="Admin Anuj · Packing Somnath · Delivery Mayur">
           <div className="grid gap-3">
-            {DEMO_USERS.map((user) => (
+            {SUPABASE_USERS.map((user) => (
               <Button
                 key={user.id}
                 className="justify-between"
