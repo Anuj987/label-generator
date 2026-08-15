@@ -68,8 +68,10 @@ create table public.order_products (
   id uuid primary key default gen_random_uuid(),
   order_id uuid not null references public.orders(id) on delete cascade,
   product_name text not null,
+  description text,
   quantity numeric not null check (quantity > 0),
   unit text not null,
+  purchase_price numeric,
   product_master_id uuid,
   created_at timestamptz not null default now()
 );
