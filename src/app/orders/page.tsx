@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAppContext } from "@/components/providers/app-provider";
 import {
@@ -37,6 +37,8 @@ export default function OrdersPage() {
   const router = useRouter();
   const { createOrder, currentUser, state } = useAppContext();
   const [query, setQuery] = useState("");
+  const [customerMenuOpen, setCustomerMenuOpen] = useState(false);
+  const customerFieldRef = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState({
     customerName: "",
     contactPerson: "",
@@ -75,6 +77,23 @@ export default function OrdersPage() {
       .slice(0, 8);
   }, [form.customerName, state.customers]);
 
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!customerFieldRef.current?.contains(event.target as Node)) {
+        setCustomerMenuOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setCustomerMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   function applyCustomerSuggestion(name: string) {
     const match = state.customers.find((customer) => customer.name === name);
     setForm((previous) => ({
@@ -84,6 +103,7 @@ export default function OrdersPage() {
       mobile: match?.mobile || previous.mobile,
       gst: match?.gst || previous.gst,
     }));
+    setCustomerMenuOpen(false);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -126,6 +146,7 @@ export default function OrdersPage() {
       externalCustomerId: "",
     });
     setProducts([emptyProduct()]);
+    setCustomerMenuOpen(false);
     router.push(`/orders/${order.id}`);
   }
 
@@ -155,29 +176,29 @@ export default function OrdersPage() {
         className="border-teal-300/80 bg-gradient-to-br from-teal-50 via-white to-slate-50 p-5 shadow-md shadow-teal-900/5 sm:p-7"
       >
         <form className="grid gap-5" onSubmit={handleSubmit}>
-          <div className="relative">
+          <div className="relative" ref={customerFieldRef}>
             <Input
               label="Customer name"
               required
-              list="customer-suggestions"
+              autoComplete="off"
               value={form.customerName}
-              onChange={(event) =>
-                setForm((previous) => ({ ...previous, customerName: event.target.value }))
-              }
+              onFocus={() => {
+                if (form.customerName.trim().length > 0) setCustomerMenuOpen(true);
+              }}
+              onChange={(event) => {
+                setForm((previous) => ({ ...previous, customerName: event.target.value }));
+                setCustomerMenuOpen(true);
+              }}
               placeholder="Type name — suggestions appear from your list"
             />
-            <datalist id="customer-suggestions">
-              {state.customers.map((customer) => (
-                <option key={customer.id} value={customer.name} />
-              ))}
-            </datalist>
-            {suggestions.length ? (
+            {customerMenuOpen && suggestions.length ? (
               <div className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
                 {suggestions.map((customer) => (
                   <button
                     key={customer.id}
                     type="button"
                     className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => applyCustomerSuggestion(customer.name)}
                   >
                     <span className="font-medium text-slate-900">{customer.name}</span>
