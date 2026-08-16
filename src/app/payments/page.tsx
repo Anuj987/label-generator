@@ -7,6 +7,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  PhotoThumbGrid,
   SectionCard,
   Select,
   TextArea,
@@ -213,8 +214,10 @@ export default function PaymentsPage() {
               ))}
             </Select>
             <Input
-              label="Upload cheque / UPI / receipt"
+              label="Upload cheque / UPI / receipt photo"
               type="file"
+              accept="image/*"
+              capture="environment"
               multiple
               onChange={(event) => setFiles(event.target.files)}
             />
@@ -255,36 +258,14 @@ export default function PaymentsPage() {
                   </div>
                 </div>
                 {payment.documents.length ? (
-                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {payment.documents.map((doc) => {
-                      const isImage =
-                        doc.dataUrl.startsWith("data:image/") ||
-                        /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(doc.dataUrl) ||
-                        doc.dataUrl.includes("image/");
-                      return (
-                        <a
-                          key={doc.id}
-                          href={doc.dataUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block overflow-hidden rounded-2xl border border-slate-200 bg-white"
-                        >
-                          {isImage ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={doc.dataUrl}
-                              alt={doc.name}
-                              className="h-28 w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-28 items-center justify-center px-2 text-center text-xs text-teal-700">
-                              {doc.name}
-                            </div>
-                          )}
-                          <p className="truncate px-2 py-1 text-xs text-slate-600">{doc.name}</p>
-                        </a>
-                      );
-                    })}
+                  <div className="mt-3">
+                    <PhotoThumbGrid
+                      items={payment.documents.map((doc) => ({
+                        id: doc.id,
+                        src: doc.dataUrl,
+                        title: doc.name,
+                      }))}
+                    />
                   </div>
                 ) : (
                   <p className="mt-3 text-xs text-slate-400">No proof photo attached</p>

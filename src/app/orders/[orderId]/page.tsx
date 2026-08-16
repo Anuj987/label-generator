@@ -9,6 +9,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  PhotoThumbGrid,
   SectionCard,
   Select,
   TextArea,
@@ -479,23 +480,20 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         </SectionCard>
       ) : null}
 
-      <SectionCard title="Documents">
+      <SectionCard title="Delivery receipt & photos" description="Tap a photo to open full size.">
         {order.documents.length ? (
-          <div className="space-y-2">
-            {order.documents.map((doc) => (
-              <a
-                key={doc.id}
-                href={doc.dataUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded-2xl border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
-              >
-                {doc.name} · {doc.kind} · {doc.uploadedBy}
-              </a>
-            ))}
-          </div>
+          <PhotoThumbGrid
+            items={order.documents.map((doc) => ({
+              id: doc.id,
+              src: doc.dataUrl,
+              title: `${doc.name} · ${doc.kind}`,
+            }))}
+          />
         ) : (
-          <EmptyState title="No documents yet" description="Delivery proofs and bills appear here." />
+          <EmptyState
+            title="No delivery photos yet"
+            description="Delivery receipt photos uploaded by Mayur appear here."
+          />
         )}
       </SectionCard>
 

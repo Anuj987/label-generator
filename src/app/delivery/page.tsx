@@ -146,11 +146,16 @@ export default function DeliveryPage() {
                       {mode === "delivered" ? (
                         <>
                           <Input
-                            label="Upload signed bill / photos"
+                            label="Upload delivery receipt photo"
                             type="file"
+                            accept="image/*"
+                            capture="environment"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />
+                          <p className="text-xs text-slate-500">
+                            Take or choose a clear photo of the signed delivery receipt / bill.
+                          </p>
                           <TextArea
                             label="Notes"
                             value={notes}
@@ -212,8 +217,10 @@ export default function DeliveryPage() {
                             </div>
                           ))}
                           <Input
-                            label="Upload photos / signed bill"
+                            label="Upload delivery receipt / return photos"
                             type="file"
+                            accept="image/*"
+                            capture="environment"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />
@@ -234,8 +241,10 @@ export default function DeliveryPage() {
                             onChange={(event) => setReason(event.target.value)}
                           />
                           <Input
-                            label="Upload photos"
+                            label="Upload return receipt photos"
                             type="file"
+                            accept="image/*"
+                            capture="environment"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />

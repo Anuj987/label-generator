@@ -224,13 +224,23 @@ export async function loadLiveState(): Promise<AppState> {
 
   const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
 
-  const [customersRes, ordersRes, itemsRes, paymentsRes, docsRes, auditRes, packingRes, deliveryRes] =
-    await Promise.all([
+  const [
+    customersRes,
+    ordersRes,
+    itemsRes,
+    paymentsRes,
+    docsRes,
+    deliveryDocsRes,
+    auditRes,
+    packingRes,
+    deliveryRes,
+  ] = await Promise.all([
       supabase.from("customers").select("*").order("created_at", { ascending: false }),
       supabase.from("orders").select("*, customers(*)").order("created_at", { ascending: false }),
       supabase.from("order_items").select("*"),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
       supabase.from("payment_documents").select("*").order("uploaded_at", { ascending: false }).limit(500),
+      supabase.from("delivery_documents").select("*").order("uploaded_at", { ascending: false }).limit(500),
       supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200),
       supabase.from("packing_events").select("*").order("accepted_at", { ascending: false }).limit(200),
       supabase.from("delivery_events").select("*").order("delivered_at", { ascending: false }).limit(200),
@@ -242,6 +252,7 @@ export async function loadLiveState(): Promise<AppState> {
   // Payments may be empty / RLS readable
   const paymentsRows = paymentsRes.error ? [] : paymentsRes.data ?? [];
   const paymentDocRows = docsRes.error ? [] : docsRes.data ?? [];
+  const deliveryDocRows = deliveryDocsRes.error ? [] : deliveryDocsRes.data ?? [];
   const auditRows = auditRes.error ? [] : auditRes.data ?? [];
   const packingRows = packingRes.error ? [] : packingRes.data ?? [];
   const deliveryRows = deliveryRes.error ? [] : deliveryRes.data ?? [];
@@ -257,14 +268,39 @@ export async function loadLiveState(): Promise<AppState> {
   }
 
   const customerNameById = new Map(customers.map((customer) => [customer.id, customer.name]));
+  const deliveryDocsByOrder = new Map<string, Order["documents"]>();
+  for (const row of deliveryDocRows) {
+    const record = row as Record<string, unknown>;
+    const orderId = record.order_id ? String(record.order_id) : "";
+    const imageUrl = record.image_url ? String(record.image_url) : "";
+    if (!orderId || !imageUrl) continue;
+    const list = deliveryDocsByOrder.get(orderId) ?? [];
+    list.push({
+      id: String(record.id),
+      name: String(record.file_name ?? "delivery-receipt.jpg"),
+      kind: "signed_bill",
+      dataUrl: imageUrl,
+      uploadedAt: String(record.uploaded_at ?? new Date().toISOString()),
+      uploadedBy: record.uploaded_by
+        ? usersById.get(String(record.uploaded_by)) ?? "Delivery"
+        : "Delivery",
+      orderId,
+    });
+    deliveryDocsByOrder.set(orderId, list);
+  }
+
   const orders = (ordersRes.data ?? []).map((row) => {
     const record = row as Record<string, unknown> & { customers?: Record<string, unknown> | null };
-    return mapOrder(
+    const mapped = mapOrder(
       record,
       record.customers ?? null,
       itemsByOrder.get(String(record.id)) ?? [],
       usersById,
     );
+    return {
+      ...mapped,
+      documents: deliveryDocsByOrder.get(mapped.id) ?? [],
+    };
   });
   const orderNumberById = new Map(orders.map((order) => [order.id, order.orderNumber]));
 
@@ -634,6 +670,26 @@ export async function updateLiveOrderItemsQuantities(
       .eq("id", line.productId);
     if (result.error) throw result.error;
   }
+}
+
+export async function uploadLiveDeliveryDocuments(
+  orderId: string,
+  docs: Array<{ name: string; dataUrl: string; mimeType?: string }>,
+  uploadedBy: string,
+) {
+  if (!supabase || !docs.length) return;
+
+  const rows = docs.map((doc) => ({
+    order_id: orderId,
+    image_url: doc.dataUrl,
+    file_name: doc.name,
+    mime_type: doc.mimeType || "image/jpeg",
+    uploaded_by: uploadedBy,
+    document_type: "delivery_bill",
+  }));
+
+  const inserted = await supabase.from("delivery_documents").insert(rows).select("*");
+  if (inserted.error) throw inserted.error;
 }
 
 export async function createLivePayment(input: PaymentInput, actor: UserProfile) {

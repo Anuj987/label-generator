@@ -26,6 +26,7 @@ import {
   updateLiveOrderBeforePacking,
   updateLiveOrderItemsQuantities,
   updateLiveOrderStatus,
+  uploadLiveDeliveryDocuments,
 } from "@/lib/supabase-data";
 import {
   appendLiveAuditEvent,
@@ -564,6 +565,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           delivery_instructions: notes || null,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -626,6 +640,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           delivery_instructions: notes || null,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -672,6 +699,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           return_reason: reason,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
