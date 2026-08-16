@@ -12,7 +12,7 @@ import {
   Select,
   TextArea,
 } from "@/components/ui";
-import { fileToDataUrl, formatCurrency, formatDateTime } from "@/lib/storage";
+import { errorMessage, fileToCompressedDataUrl, formatCurrency, formatDateTime } from "@/lib/storage";
 import type { DocumentKind, PaymentMode } from "@/lib/types";
 
 export default function PaymentsPage() {
@@ -78,9 +78,9 @@ export default function PaymentsPage() {
       if (files) {
         for (const file of Array.from(files)) {
           uploaded.push({
-            name: file.name,
+            name: file.name.replace(/\.\w+$/, "") + ".jpg",
             kind: kindByMode[form.mode],
-            dataUrl: await fileToDataUrl(file),
+            dataUrl: await fileToCompressedDataUrl(file),
           });
         }
       }
@@ -111,8 +111,7 @@ export default function PaymentsPage() {
       });
       setFiles(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save payment";
-      setError(message);
+      setError(errorMessage(err, "Failed to save payment"));
     } finally {
       setSaving(false);
     }
@@ -217,10 +216,10 @@ export default function PaymentsPage() {
               label="Upload cheque / UPI / receipt photo"
               type="file"
               accept="image/*"
-              capture="environment"
               multiple
               onChange={(event) => setFiles(event.target.files)}
             />
+            <p className="text-xs text-slate-500">Photos are compressed automatically for mobile save.</p>
             <TextArea
               label="Notes"
               value={form.notes}

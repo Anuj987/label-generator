@@ -785,7 +785,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (liveMode) {
         const payment = await createLivePayment(input, currentUser);
-        appendLivePayment(payment);
+        try {
+          appendLivePayment(payment);
+        } catch {
+          // ignore phone storage quota errors
+        }
         const event: AuditEvent = {
           id: createId("evt"),
           paymentId: payment.id,
@@ -797,15 +801,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
           emoji: "💰",
           createdAt: new Date().toISOString(),
         };
-        rememberLiveEvent(event);
+        try {
+          rememberLiveEvent(event);
+        } catch {
+          // ignore
+        }
         void recordLiveAuditLog({
           orderId: input.orderId,
           userId: currentUser.id,
           action: "payment_collected",
           description: event.detail,
         });
-        await publishOpsSync({ payment, event });
-        await refreshLive();
+        void publishOpsSync({ payment, event });
+        try {
+          await refreshLive();
+        } catch {
+          // Payment already saved — don't fail the UI if refresh fails on poor mobile network.
+        }
         setState((previous) => ({
           ...previous,
           payments: mergePayments([payment], previous.payments),

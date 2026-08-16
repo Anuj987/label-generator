@@ -149,7 +149,6 @@ export default function DeliveryPage() {
                             label="Upload delivery receipt photo"
                             type="file"
                             accept="image/*"
-                            capture="environment"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />
@@ -220,7 +219,6 @@ export default function DeliveryPage() {
                             label="Upload delivery receipt / return photos"
                             type="file"
                             accept="image/*"
-                            capture="environment"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />
@@ -244,7 +242,6 @@ export default function DeliveryPage() {
                             label="Upload return receipt photos"
                             type="file"
                             accept="image/*"
-                            capture="environment"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />

@@ -76,9 +76,21 @@ export function saveLivePayments(payments: Payment[]) {
 }
 
 export function appendLivePayment(payment: Payment) {
-  const next = [payment, ...loadLivePayments().filter((item) => item.id !== payment.id)];
-  saveLivePayments(next);
-  return next;
+  try {
+    const next = [payment, ...loadLivePayments().filter((item) => item.id !== payment.id)];
+    saveLivePayments(next);
+    return next;
+  } catch {
+    // Phone storage quota often fails with large photos — keep metadata only.
+    const slim: Payment = { ...payment, documents: [] };
+    const next = [slim, ...loadLivePayments().filter((item) => item.id !== payment.id)];
+    try {
+      saveLivePayments(next);
+    } catch {
+      // ignore
+    }
+    return next;
+  }
 }
 
 export function mergePayments(...groups: Payment[][]): Payment[] {
@@ -185,7 +197,50 @@ export async function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read file"));
     reader.readAsDataURL(file);
   });
+}
+
+/** Compress phone camera photos so payment save works on mobile. */
+export async function fileToCompressedDataUrl(
+  file: File,
+  options?: { maxEdge?: number; quality?: number },
+) {
+  const maxEdge = options?.maxEdge ?? 1280;
+  const quality = options?.quality ?? 0.72;
+
+  if (!file.type.startsWith("image/")) {
+    return fileToDataUrl(file);
+  }
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      bitmap.close();
+      return fileToDataUrl(file);
+    }
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    return canvas.toDataURL("image/jpeg", quality);
+  } catch {
+    return fileToDataUrl(file);
+  }
+}
+
+export function errorMessage(err: unknown, fallback = "Something went wrong") {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err.trim()) return err;
+  if (err && typeof err === "object" && "message" in err) {
+    const message = String((err as { message?: unknown }).message ?? "");
+    if (message.trim()) return message;
+  }
+  return fallback;
 }

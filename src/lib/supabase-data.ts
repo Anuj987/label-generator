@@ -714,7 +714,11 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
   });
 
   if (rpc.error || !rpc.data) {
-    throw rpc.error ?? new Error("Payment create failed");
+    const message =
+      rpc.error && typeof rpc.error === "object" && "message" in rpc.error
+        ? String((rpc.error as { message?: string }).message || "Payment create failed")
+        : "Payment create failed";
+    throw new Error(message);
   }
 
   const paymentId = String(rpc.data);
