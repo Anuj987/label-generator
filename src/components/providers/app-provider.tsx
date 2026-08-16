@@ -9,18 +9,13 @@ import {
   useMemo,
   useState,
 } from "react";
-import { createId, generatePackingChecklist } from "@/lib/demo-data";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 import {
-  fileToDataUrl,
-  getRoleCookie,
-  loadState,
-  minutesBetween,
-  saveState,
-  setRoleCookie,
-} from "@/lib/storage";
-import { supabaseConfigured } from "@/lib/supabase";
+  getSessionStaffProfile,
+  signInWithEmailPassword,
+  signOutStaff,
+} from "@/lib/supabase-auth";
 import {
-  SUPABASE_USERS,
   createLiveCustomer,
   createLiveOrder,
   createLivePayment,
@@ -30,8 +25,15 @@ import {
   updateLiveOrderBeforePacking,
   updateLiveOrderItemsQuantities,
   updateLiveOrderStatus,
-  userForRole,
 } from "@/lib/supabase-data";
+import {
+  fileToDataUrl,
+  loadState,
+  minutesBetween,
+  saveState,
+  setRoleCookie,
+} from "@/lib/storage";
+import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import type {
   AppState,
   CreateOrderInput,
@@ -40,7 +42,6 @@ import type {
   Order,
   PartialDeliveryLine,
   PaymentInput,
-  Role,
   UploadedFile,
   UserProfile,
 } from "@/lib/types";
@@ -50,8 +51,8 @@ type AppContextValue = {
   liveMode: boolean;
   currentUser: UserProfile | null;
   state: AppState;
-  login: (role: Role) => void;
-  logout: () => void;
+  loginWithPassword: (email: string, password: string) => Promise<UserProfile>;
+  logout: () => Promise<void>;
   refreshLive: () => Promise<void>;
   createCustomer: (input: CustomerInput) => Promise<void>;
   createOrder: (input: CreateOrderInput) => Promise<Order>;
@@ -110,26 +111,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe = () => {};
 
     async function boot() {
-      const role = getRoleCookie();
-      const user = role
-        ? liveMode
-          ? userForRole(role)
-          : SUPABASE_USERS.find((item) => item.role === role) ?? null
-        : null;
-      if (!cancelled) setCurrentUser(user);
+      // Clear legacy passwordless role cookie so live mode cannot bypass Auth.
+      if (liveMode) setRoleCookie(null);
 
       try {
         if (liveMode) {
+          const profile = await getSessionStaffProfile();
+          if (!cancelled) setCurrentUser(profile);
           const live = await loadLiveState();
           if (!cancelled) setState(live);
-        } else if (!cancelled) {
-          setState(loadState());
+
+          if (supabase) {
+            const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+              if (cancelled) return;
+              if (event === "SIGNED_OUT" || !session?.user) {
+                setCurrentUser(null);
+                return;
+              }
+              if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") {
+                const next = await getSessionStaffProfile();
+                if (!cancelled) setCurrentUser(next);
+              }
+            });
+            unsubscribe = () => data.subscription.unsubscribe();
+          }
+        } else {
+          // Demo mode only: no passwordless cookie login when Supabase is configured.
+          if (!cancelled) setCurrentUser(null);
+          if (!cancelled) setState(loadState());
         }
       } catch (error) {
-        console.error("Failed to load live Supabase data", error);
-        if (!cancelled) setState(loadState());
+        console.error("Failed to boot app session", error);
+        if (!cancelled) {
+          setCurrentUser(null);
+          setState(loadState());
+        }
       } finally {
         if (!cancelled) setReady(true);
       }
@@ -138,6 +157,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void boot();
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [liveMode]);
 
@@ -154,15 +174,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [liveMode, ready, refreshLive]);
 
   const value = useMemo<AppContextValue>(() => {
-    function login(role: Role) {
-      const user = liveMode
-        ? userForRole(role)
-        : SUPABASE_USERS.find((item) => item.role === role) ?? null;
-      setRoleCookie(role);
-      setCurrentUser(user);
+    async function loginWithPassword(email: string, password: string) {
+      if (!liveMode) {
+        throw new Error("Password login requires Supabase Auth.");
+      }
+      const profile = await signInWithEmailPassword(email, password);
+      setRoleCookie(null);
+      setCurrentUser(profile);
+      await refreshLive();
+      return profile;
     }
 
-    function logout() {
+    async function logout() {
+      if (liveMode) await signOutStaff();
       setRoleCookie(null);
       setCurrentUser(null);
     }
@@ -724,7 +748,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       liveMode,
       currentUser,
       state,
-      login,
+      loginWithPassword,
       logout,
       refreshLive,
       createCustomer,

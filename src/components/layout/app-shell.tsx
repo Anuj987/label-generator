@@ -118,7 +118,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               <p className="text-sm font-semibold text-slate-900">{currentUser.name}</p>
               <p className="text-xs text-slate-500">{ROLE_LABELS[currentUser.role]}</p>
             </div>
-            <Button variant="secondary" onClick={() => { logout(); router.push("/login"); }}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void logout().then(() => router.push("/login"));
+              }}
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Logout
             </Button>
