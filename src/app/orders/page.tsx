@@ -184,28 +184,10 @@ export default function OrdersPage() {
       <SectionCard
         title="Create order"
         titleClassName="text-2xl sm:text-3xl tracking-tight"
-        description="Select a customer from your list (or type a new name). Contact, mobile, address, and invoice number are optional."
+        description="Type any customer name, or tap a saved customer below to fill the form. Contact, mobile, address, and invoice number are optional."
         className="border-teal-300/80 bg-gradient-to-br from-teal-50 via-white to-slate-50 p-5 shadow-md shadow-teal-900/5 sm:p-7"
       >
         <form className="grid gap-5" onSubmit={handleSubmit}>
-          <Select
-            label="Select customer"
-            value={customersSorted.find((customer) => customer.name === form.customerName)?.id ?? ""}
-            onChange={(event) => {
-              const id = event.target.value;
-              if (!id) return;
-              applyCustomerSuggestion(id);
-            }}
-          >
-            <option value="">Choose from {customersSorted.length} customers…</option>
-            {customersSorted.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.name}
-                {customer.mobile ? ` · ${customer.mobile}` : ""}
-              </option>
-            ))}
-          </Select>
-
           <div className="relative" ref={customerFieldRef}>
             <Input
               label="Customer name"
@@ -217,7 +199,7 @@ export default function OrdersPage() {
                 setForm((previous) => ({ ...previous, customerName: event.target.value }));
                 setCustomerMenuOpen(true);
               }}
-              placeholder="Or type a new / existing name"
+              placeholder="Write customer name here"
             />
             {customerMenuOpen && suggestions.length ? (
               <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
@@ -233,13 +215,51 @@ export default function OrdersPage() {
                     {customer.mobile ? (
                       <span className="ml-2 text-slate-500">{customer.mobile}</span>
                     ) : null}
-                    {customer.address ? (
-                      <span className="mt-0.5 block text-xs text-slate-400">{customer.address}</span>
-                    ) : null}
                   </button>
                 ))}
               </div>
             ) : null}
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white/90 p-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Saved customers</p>
+                <p className="text-xs text-slate-500">
+                  Tap one to fill name, contact, mobile, and address. You can still edit after.
+                </p>
+              </div>
+              <p className="text-xs font-medium text-teal-700">{customersSorted.length} saved</p>
+            </div>
+            {customersSorted.length ? (
+              <div className="grid max-h-52 gap-2 overflow-auto sm:grid-cols-2">
+                {customersSorted.map((customer) => {
+                  const selected = form.customerName === customer.name;
+                  return (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      onClick={() => applyCustomerSuggestion(customer.id)}
+                      className={`rounded-2xl border px-3 py-2.5 text-left transition ${
+                        selected
+                          ? "border-teal-500 bg-teal-50 ring-1 ring-teal-400"
+                          : "border-slate-200 bg-slate-50 hover:border-teal-300 hover:bg-white"
+                      }`}
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{customer.name}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {[customer.mobile, customer.address].filter(Boolean).join(" · ") ||
+                          "No contact details yet"}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No saved customers yet. Type a name above, or add customers on the Customers page.
+              </p>
+            )}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
