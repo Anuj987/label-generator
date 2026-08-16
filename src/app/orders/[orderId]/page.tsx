@@ -83,6 +83,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
   const canEdit = currentUser.role === "admin" && order.status === "new";
 
   function startEditing() {
+    if (!order) return;
     setForm({
       customerName: order.customerName,
       contactPerson: order.contactPerson,
