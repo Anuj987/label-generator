@@ -1,7 +1,9 @@
-import type { AppState, Role } from "@/lib/types";
+import type { AppState, AuditEvent, Payment, Role } from "@/lib/types";
 import { createInitialState } from "@/lib/demo-data";
 
 const STORAGE_KEY = "nt-operations-console-v4";
+const LIVE_AUDIT_KEY = "nt-live-audit-events-v1";
+const LIVE_PAYMENTS_KEY = "nt-live-payments-v1";
 const ROLE_COOKIE = "nt_role";
 
 export function loadState(): AppState {
@@ -19,6 +21,100 @@ export function loadState(): AppState {
 export function saveState(state: AppState) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+export function loadLiveAuditEvents(): AuditEvent[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LIVE_AUDIT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as AuditEvent[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLiveAuditEvents(events: AuditEvent[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LIVE_AUDIT_KEY, JSON.stringify(events.slice(0, 500)));
+}
+
+export function appendLiveAuditEvent(event: AuditEvent) {
+  const next = [event, ...loadLiveAuditEvents().filter((item) => item.id !== event.id)];
+  saveLiveAuditEvents(next);
+  return next;
+}
+
+export function mergeAuditEvents(...groups: AuditEvent[][]): AuditEvent[] {
+  const byId = new Map<string, AuditEvent>();
+  for (const group of groups) {
+    for (const event of group) {
+      byId.set(event.id, event);
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+export function loadLivePayments(): Payment[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LIVE_PAYMENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Payment[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLivePayments(payments: Payment[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LIVE_PAYMENTS_KEY, JSON.stringify(payments.slice(0, 300)));
+}
+
+export function appendLivePayment(payment: Payment) {
+  try {
+    const next = [payment, ...loadLivePayments().filter((item) => item.id !== payment.id)];
+    saveLivePayments(next);
+    return next;
+  } catch {
+    // Phone storage quota often fails with large photos — keep metadata only.
+    const slim: Payment = { ...payment, documents: [] };
+    const next = [slim, ...loadLivePayments().filter((item) => item.id !== payment.id)];
+    try {
+      saveLivePayments(next);
+    } catch {
+      // ignore
+    }
+    return next;
+  }
+}
+
+export function mergePayments(...groups: Payment[][]): Payment[] {
+  const byId = new Map<string, Payment>();
+  for (const group of groups) {
+    for (const payment of group) {
+      const existing = byId.get(payment.id);
+      if (!existing) {
+        byId.set(payment.id, payment);
+        continue;
+      }
+      byId.set(payment.id, {
+        ...existing,
+        ...payment,
+        documents:
+          (payment.documents?.length ?? 0) >= (existing.documents?.length ?? 0)
+            ? payment.documents
+            : existing.documents,
+      });
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
 }
 
 export function getRoleCookie(): Role | null {
@@ -101,7 +197,50 @@ export async function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read file"));
     reader.readAsDataURL(file);
   });
+}
+
+/** Compress phone camera photos so payment save works on mobile. */
+export async function fileToCompressedDataUrl(
+  file: File,
+  options?: { maxEdge?: number; quality?: number },
+) {
+  const maxEdge = options?.maxEdge ?? 1280;
+  const quality = options?.quality ?? 0.72;
+
+  if (!file.type.startsWith("image/")) {
+    return fileToDataUrl(file);
+  }
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      bitmap.close();
+      return fileToDataUrl(file);
+    }
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    return canvas.toDataURL("image/jpeg", quality);
+  } catch {
+    return fileToDataUrl(file);
+  }
+}
+
+export function errorMessage(err: unknown, fallback = "Something went wrong") {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err.trim()) return err;
+  if (err && typeof err === "object" && "message" in err) {
+    const message = String((err as { message?: unknown }).message ?? "");
+    if (message.trim()) return message;
+  }
+  return fallback;
 }

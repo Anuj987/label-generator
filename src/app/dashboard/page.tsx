@@ -64,9 +64,9 @@ export default function DashboardPage() {
         <StatCard label="Payments collected today" value={formatCurrency(stats.paymentsToday)} />
       </div>
 
-      <SectionCard title="Activity feed" description="Latest operational events across the business.">
+      <SectionCard title="Activity feed" description="Latest operational events across the business, including payment collections.">
         <div className="space-y-3">
-          {state.auditEvents.slice(0, 12).map((event) => (
+          {state.auditEvents.slice(0, 20).map((event) => (
             <div
               key={event.id}
               className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
@@ -80,7 +80,7 @@ export default function DashboardPage() {
             </div>
           ))}
           {!state.auditEvents.length ? (
-            <EmptyState title="No activity yet" description="Create an order to start the feed." />
+            <EmptyState title="No activity yet" description="Create an order or collect a payment to start the feed." />
           ) : null}
         </div>
       </SectionCard>

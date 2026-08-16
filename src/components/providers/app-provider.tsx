@@ -9,38 +9,51 @@ import {
   useMemo,
   useState,
 } from "react";
-import { createId, generatePackingChecklist } from "@/lib/demo-data";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 import {
-  fileToDataUrl,
-  getRoleCookie,
-  loadState,
-  minutesBetween,
-  saveState,
-  setRoleCookie,
-} from "@/lib/storage";
-import { supabaseConfigured } from "@/lib/supabase";
+  getSessionStaffProfile,
+  signInWithEmailPassword,
+  signOutStaff,
+} from "@/lib/supabase-auth";
 import {
-  SUPABASE_USERS,
   createLiveCustomer,
   createLiveOrder,
   createLivePayment,
   loadLiveState,
   persistChecklistCompletion,
+  recordLiveAuditLog,
   subscribeLiveChanges,
   updateLiveOrderBeforePacking,
   updateLiveOrderItemsQuantities,
   updateLiveOrderStatus,
-  userForRole,
+  uploadLiveDeliveryDocuments,
 } from "@/lib/supabase-data";
+import {
+  appendLiveAuditEvent,
+  appendLivePayment,
+  fileToDataUrl,
+  loadLiveAuditEvents,
+  loadLivePayments,
+  loadState,
+  mergeAuditEvents,
+  mergePayments,
+  minutesBetween,
+  saveLiveAuditEvents,
+  saveLivePayments,
+  saveState,
+  setRoleCookie,
+} from "@/lib/storage";
+import { fetchOpsSync, publishOpsSync } from "@/lib/ops-sync";
+import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import type {
   AppState,
+  AuditEvent,
   CreateOrderInput,
   CustomerInput,
   DocumentKind,
   Order,
   PartialDeliveryLine,
   PaymentInput,
-  Role,
   UploadedFile,
   UserProfile,
 } from "@/lib/types";
@@ -50,8 +63,8 @@ type AppContextValue = {
   liveMode: boolean;
   currentUser: UserProfile | null;
   state: AppState;
-  login: (role: Role) => void;
-  logout: () => void;
+  loginWithPassword: (email: string, password: string) => Promise<UserProfile>;
+  logout: () => Promise<void>;
   refreshLive: () => Promise<void>;
   createCustomer: (input: CustomerInput) => Promise<void>;
   createOrder: (input: CreateOrderInput) => Promise<Order>;
@@ -104,32 +117,89 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshLive = useCallback(async () => {
     if (!liveMode) return;
-    const live = await loadLiveState();
-    setState(live);
+    const [live, sync] = await Promise.all([loadLiveState(), fetchOpsSync()]);
+    // Keep local caches aligned with shared sync so phones see the same payments/activity.
+    if (sync.sync) {
+      saveLivePayments(mergePayments(sync.payments, loadLivePayments()));
+      saveLiveAuditEvents(mergeAuditEvents(sync.events, loadLiveAuditEvents()));
+    }
+    setState((previous) => ({
+      ...live,
+      auditEvents: mergeAuditEvents(
+        previous.auditEvents,
+        live.auditEvents,
+        sync.events,
+        loadLiveAuditEvents(),
+      ),
+      payments: mergePayments(previous.payments, live.payments, sync.payments, loadLivePayments()),
+    }));
   }, [liveMode]);
+
+  function rememberLiveEvent(event: AuditEvent) {
+    appendLiveAuditEvent(event);
+    void publishOpsSync({ event });
+    setState((previous) => ({
+      ...previous,
+      auditEvents: mergeAuditEvents([event], previous.auditEvents),
+    }));
+  }
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe = () => {};
 
     async function boot() {
-      const role = getRoleCookie();
-      const user = role
-        ? liveMode
-          ? userForRole(role)
-          : SUPABASE_USERS.find((item) => item.role === role) ?? null
-        : null;
-      if (!cancelled) setCurrentUser(user);
+      // Clear legacy passwordless role cookie so live mode cannot bypass Auth.
+      if (liveMode) setRoleCookie(null);
 
       try {
         if (liveMode) {
-          const live = await loadLiveState();
-          if (!cancelled) setState(live);
-        } else if (!cancelled) {
-          setState(loadState());
+          const profile = await getSessionStaffProfile();
+          if (!cancelled) setCurrentUser(profile);
+          const [live, sync] = await Promise.all([loadLiveState(), fetchOpsSync()]);
+          if (sync.sync) {
+            const localPayments = loadLivePayments();
+            const localEvents = loadLiveAuditEvents();
+            // Upload any device-local payments/events so other phones can see them.
+            if (localPayments.length || localEvents.length) {
+              await publishOpsSync({ payments: localPayments, events: localEvents });
+            }
+            saveLivePayments(mergePayments(sync.payments, localPayments));
+            saveLiveAuditEvents(mergeAuditEvents(sync.events, localEvents));
+          }
+          if (!cancelled) {
+            setState({
+              ...live,
+              payments: mergePayments(live.payments, sync.payments, loadLivePayments()),
+              auditEvents: mergeAuditEvents(live.auditEvents, sync.events, loadLiveAuditEvents()),
+            });
+          }
+
+          if (supabase) {
+            const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+              if (cancelled) return;
+              if (event === "SIGNED_OUT" || !session?.user) {
+                setCurrentUser(null);
+                return;
+              }
+              if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") {
+                const next = await getSessionStaffProfile();
+                if (!cancelled) setCurrentUser(next);
+              }
+            });
+            unsubscribe = () => data.subscription.unsubscribe();
+          }
+        } else {
+          // Demo mode only: no passwordless cookie login when Supabase is configured.
+          if (!cancelled) setCurrentUser(null);
+          if (!cancelled) setState(loadState());
         }
       } catch (error) {
-        console.error("Failed to load live Supabase data", error);
-        if (!cancelled) setState(loadState());
+        console.error("Failed to boot app session", error);
+        if (!cancelled) {
+          setCurrentUser(null);
+          setState(loadState());
+        }
       } finally {
         if (!cancelled) setReady(true);
       }
@@ -138,6 +208,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void boot();
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [liveMode]);
 
@@ -154,15 +225,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [liveMode, ready, refreshLive]);
 
   const value = useMemo<AppContextValue>(() => {
-    function login(role: Role) {
-      const user = liveMode
-        ? userForRole(role)
-        : SUPABASE_USERS.find((item) => item.role === role) ?? null;
-      setRoleCookie(role);
-      setCurrentUser(user);
+    async function loginWithPassword(email: string, password: string) {
+      if (!liveMode) {
+        throw new Error("Password login requires Supabase Auth.");
+      }
+      const profile = await signInWithEmailPassword(email, password);
+      setRoleCookie(null);
+      setCurrentUser(profile);
+      await refreshLive();
+      return profile;
     }
 
-    function logout() {
+    async function logout() {
+      if (liveMode) await signOutStaff();
       setRoleCookie(null);
       setCurrentUser(null);
     }
@@ -203,6 +278,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (liveMode) {
         const order = await createLiveOrder(input, currentUser, state.orders);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId: order.id,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_created",
+          detail: `Order ${order.orderNumber} created by ${currentUser.name} for ${order.customerName}`,
+          emoji: "🟢",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId: order.id,
+          userId: currentUser.id,
+          action: "order_created",
+          description: event.detail,
+        });
         await refreshLive();
         return order;
       }
@@ -216,13 +308,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const order: Order = {
         id: createId("ord"),
         orderNumber,
-        invoiceNumber: input.invoiceNumber,
+        invoiceNumber: input.invoiceNumber?.trim() || "",
         invoiceDate: input.invoiceDate,
         deliveryDate: input.deliveryDate,
         customerName: input.customerName.trim(),
-        contactPerson: input.contactPerson.trim(),
-        mobile: input.mobile.trim(),
-        address: input.address.trim(),
+        contactPerson: input.contactPerson?.trim() || "",
+        mobile: input.mobile?.trim() || "",
+        address: input.address?.trim() || "",
         gst: input.gst?.trim() || undefined,
         priority: input.priority,
         notes: input.notes,
@@ -261,42 +353,75 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function updateOrderBeforePacking(orderId: string, input: CreateOrderInput) {
       if (!currentUser || currentUser.role !== "admin") return;
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "new") return;
+
+      const productCount = input.products.filter((product) => product.productName.trim()).length;
+      const detail = `${currentUser.name} edited ${existing.orderNumber} · ${input.customerName.trim()} · ${productCount} product${productCount === 1 ? "" : "s"}`;
+
       if (liveMode) {
         await updateLiveOrderBeforePacking(orderId, input);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_edited",
+          detail,
+          emoji: "✏️",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId,
+          userId: currentUser.id,
+          action: "order_edited",
+          description: detail,
+        });
         await refreshLive();
         return;
       }
 
       setState((previous) => {
-        const existing = previous.orders.find((order) => order.id === orderId);
-        if (!existing || existing.status !== "new") return previous;
+        const target = previous.orders.find((order) => order.id === orderId);
+        if (!target || target.status !== "new") return previous;
         const products = input.products.map((product) => ({
           id: createId("prod"),
           ...product,
         }));
-        return {
-          ...previous,
-          orders: previous.orders.map((order) =>
-            order.id === orderId
-              ? {
-                  ...order,
-                  invoiceNumber: input.invoiceNumber,
-                  invoiceDate: input.invoiceDate,
-                  deliveryDate: input.deliveryDate,
-                  customerName: input.customerName.trim(),
-                  contactPerson: input.contactPerson.trim(),
-                  mobile: input.mobile.trim(),
-                  address: input.address.trim(),
-                  gst: input.gst?.trim() || undefined,
-                  priority: input.priority,
-                  notes: input.notes,
-                  products,
-                  packingChecklist: generatePackingChecklist(products),
-                  updatedAt: new Date().toISOString(),
-                }
-              : order,
-          ),
-        };
+        return pushEvent(
+          {
+            ...previous,
+            orders: previous.orders.map((order) =>
+              order.id === orderId
+                ? {
+                    ...order,
+                    invoiceNumber: input.invoiceNumber?.trim() || "",
+                    invoiceDate: input.invoiceDate,
+                    deliveryDate: input.deliveryDate,
+                    customerName: input.customerName.trim(),
+                    contactPerson: input.contactPerson?.trim() || "",
+                    mobile: input.mobile?.trim() || "",
+                    address: input.address?.trim() || "",
+                    gst: input.gst?.trim() || undefined,
+                    priority: input.priority,
+                    notes: input.notes,
+                    products,
+                    packingChecklist: generatePackingChecklist(products),
+                    updatedAt: new Date().toISOString(),
+                  }
+                : order,
+            ),
+          },
+          {
+            orderId,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: "order_edited",
+            detail,
+            emoji: "✏️",
+          },
+        );
       });
     }
 
@@ -472,6 +597,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           delivery_instructions: notes || null,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -534,6 +672,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           delivery_instructions: notes || null,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -580,6 +731,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           return_reason: reason,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -620,8 +784,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (currentUser.role === "packing") return;
 
       if (liveMode) {
-        await createLivePayment(input, currentUser);
-        await refreshLive();
+        const payment = await createLivePayment(input, currentUser);
+        try {
+          appendLivePayment(payment);
+        } catch {
+          // ignore phone storage quota errors
+        }
+        const event: AuditEvent = {
+          id: createId("evt"),
+          paymentId: payment.id,
+          orderId: input.orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "payment_collected",
+          detail: `Payment of ₹${input.amount.toLocaleString("en-IN")} collected from ${payment.customerName}`,
+          emoji: "💰",
+          createdAt: new Date().toISOString(),
+        };
+        try {
+          rememberLiveEvent(event);
+        } catch {
+          // ignore
+        }
+        void recordLiveAuditLog({
+          orderId: input.orderId,
+          userId: currentUser.id,
+          action: "payment_collected",
+          description: event.detail,
+        });
+        void publishOpsSync({ payment, event });
+        try {
+          await refreshLive();
+        } catch {
+          // Payment already saved — don't fail the UI if refresh fails on poor mobile network.
+        }
+        setState((previous) => ({
+          ...previous,
+          payments: mergePayments([payment], previous.payments),
+          auditEvents: mergeAuditEvents([event], previous.auditEvents),
+        }));
         return;
       }
 
@@ -724,7 +925,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       liveMode,
       currentUser,
       state,
-      login,
+      loginWithPassword,
       logout,
       refreshLive,
       createCustomer,

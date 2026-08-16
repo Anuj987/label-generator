@@ -1,7 +1,9 @@
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
+import { loadLiveAuditEvents, loadLivePayments, mergeAuditEvents, mergePayments } from "@/lib/storage";
 import type {
   AppState,
+  AuditEvent,
   CreateOrderInput,
   Customer,
   CustomerInput,
@@ -103,6 +105,8 @@ function mapCustomer(row: Record<string, unknown>): Customer {
     name: String(row.customer_name ?? ""),
     mobile: row.phone ? String(row.phone) : undefined,
     gst: row.gst_number ? String(row.gst_number) : undefined,
+    contactPerson: row.contact_person ? String(row.contact_person) : undefined,
+    address: row.address ? String(row.address) : undefined,
     notes: undefined,
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
@@ -161,6 +165,14 @@ function mapOrder(
   };
 }
 
+function mapPaymentMode(raw: unknown): Payment["mode"] {
+  const value = String(raw ?? "cash").trim().toLowerCase().replace(/\s+/g, "_");
+  if (value === "upi") return "upi";
+  if (value === "cheque") return "cheque";
+  if (value === "bank_transfer" || value === "banktransfer") return "bank_transfer";
+  return "cash";
+}
+
 function mapPayment(row: Record<string, unknown>, customerName: string, usersById: Map<string, string>): Payment {
   const receivedBy = row.received_by ? String(row.received_by) : "";
   return {
@@ -169,7 +181,7 @@ function mapPayment(row: Record<string, unknown>, customerName: string, usersByI
     invoiceNumber: String(row.invoice_number ?? ""),
     invoiceDate: String(row.invoice_date ?? ""),
     amount: Number(row.amount ?? 0),
-    mode: String(row.payment_mode ?? "cash").toLowerCase() as Payment["mode"],
+    mode: mapPaymentMode(row.payment_mode),
     orderId: undefined,
     notes: row.notes ? String(row.notes) : undefined,
     documents: [],
@@ -177,6 +189,13 @@ function mapPayment(row: Record<string, unknown>, customerName: string, usersByI
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
 }
+
+const LIVE_PAYMENT_MODE: Record<Payment["mode"], string> = {
+  cash: "Cash",
+  upi: "UPI",
+  bank_transfer: "Bank Transfer",
+  cheque: "Cheque",
+};
 
 function financialYearLabel(day = new Date()) {
   const year = day.getFullYear();
@@ -205,18 +224,38 @@ export async function loadLiveState(): Promise<AppState> {
 
   const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
 
-  const [customersRes, ordersRes, itemsRes, paymentsRes] = await Promise.all([
-    supabase.from("customers").select("*").order("created_at", { ascending: false }),
-    supabase.from("orders").select("*, customers(*)").order("created_at", { ascending: false }),
-    supabase.from("order_items").select("*"),
-    supabase.from("payments").select("*").order("created_at", { ascending: false }),
-  ]);
+  const [
+    customersRes,
+    ordersRes,
+    itemsRes,
+    paymentsRes,
+    docsRes,
+    deliveryDocsRes,
+    auditRes,
+    packingRes,
+    deliveryRes,
+  ] = await Promise.all([
+      supabase.from("customers").select("*").order("created_at", { ascending: false }),
+      supabase.from("orders").select("*, customers(*)").order("created_at", { ascending: false }),
+      supabase.from("order_items").select("*"),
+      supabase.from("payments").select("*").order("created_at", { ascending: false }),
+      supabase.from("payment_documents").select("*").order("uploaded_at", { ascending: false }).limit(500),
+      supabase.from("delivery_documents").select("*").order("uploaded_at", { ascending: false }).limit(500),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200),
+      supabase.from("packing_events").select("*").order("accepted_at", { ascending: false }).limit(200),
+      supabase.from("delivery_events").select("*").order("delivered_at", { ascending: false }).limit(200),
+    ]);
 
   if (customersRes.error) throw customersRes.error;
   if (ordersRes.error) throw ordersRes.error;
   if (itemsRes.error) throw itemsRes.error;
   // Payments may be empty / RLS readable
   const paymentsRows = paymentsRes.error ? [] : paymentsRes.data ?? [];
+  const paymentDocRows = docsRes.error ? [] : docsRes.data ?? [];
+  const deliveryDocRows = deliveryDocsRes.error ? [] : deliveryDocsRes.data ?? [];
+  const auditRows = auditRes.error ? [] : auditRes.data ?? [];
+  const packingRows = packingRes.error ? [] : packingRes.data ?? [];
+  const deliveryRows = deliveryRes.error ? [] : deliveryRes.data ?? [];
 
   const customers = (customersRes.data ?? []).map((row) => mapCustomer(row as Record<string, unknown>));
   const itemsByOrder = new Map<string, Record<string, unknown>[]>();
@@ -229,36 +268,194 @@ export async function loadLiveState(): Promise<AppState> {
   }
 
   const customerNameById = new Map(customers.map((customer) => [customer.id, customer.name]));
+  const deliveryDocsByOrder = new Map<string, Order["documents"]>();
+  for (const row of deliveryDocRows) {
+    const record = row as Record<string, unknown>;
+    const orderId = record.order_id ? String(record.order_id) : "";
+    const imageUrl = record.image_url ? String(record.image_url) : "";
+    if (!orderId || !imageUrl) continue;
+    const list = deliveryDocsByOrder.get(orderId) ?? [];
+    list.push({
+      id: String(record.id),
+      name: String(record.file_name ?? "delivery-receipt.jpg"),
+      kind: "signed_bill",
+      dataUrl: imageUrl,
+      uploadedAt: String(record.uploaded_at ?? new Date().toISOString()),
+      uploadedBy: record.uploaded_by
+        ? usersById.get(String(record.uploaded_by)) ?? "Delivery"
+        : "Delivery",
+      orderId,
+    });
+    deliveryDocsByOrder.set(orderId, list);
+  }
+
   const orders = (ordersRes.data ?? []).map((row) => {
     const record = row as Record<string, unknown> & { customers?: Record<string, unknown> | null };
-    return mapOrder(
+    const mapped = mapOrder(
       record,
       record.customers ?? null,
       itemsByOrder.get(String(record.id)) ?? [],
       usersById,
     );
+    return {
+      ...mapped,
+      documents: deliveryDocsByOrder.get(mapped.id) ?? [],
+    };
   });
+  const orderNumberById = new Map(orders.map((order) => [order.id, order.orderNumber]));
+
+  const docsByPayment = new Map<string, Payment["documents"]>();
+  for (const row of paymentDocRows) {
+    const record = row as Record<string, unknown>;
+    const paymentId = record.payment_id ? String(record.payment_id) : "";
+    if (!paymentId) continue;
+    const imageUrl = String(record.image_url ?? "");
+    if (!imageUrl) continue;
+    const list = docsByPayment.get(paymentId) ?? [];
+    list.push({
+      id: String(record.id),
+      name: String(record.file_name ?? "payment-proof"),
+      kind: "payment_proof",
+      dataUrl: imageUrl,
+      uploadedAt: String(record.uploaded_at ?? new Date().toISOString()),
+      uploadedBy: record.uploaded_by
+        ? usersById.get(String(record.uploaded_by)) ?? "Staff"
+        : "Staff",
+      paymentId,
+    });
+    docsByPayment.set(paymentId, list);
+  }
 
   const payments = paymentsRows.map((row) => {
     const record = row as Record<string, unknown>;
     const customerId = String(record.customer_id ?? "");
-    return mapPayment(record, customerNameById.get(customerId) ?? "Customer", usersById);
+    const mapped = mapPayment(record, customerNameById.get(customerId) ?? "Customer", usersById);
+    return {
+      ...mapped,
+      documents: docsByPayment.get(mapped.id) ?? [],
+    };
   });
+
+  const remoteAudit: AuditEvent[] = [];
+
+  for (const row of auditRows) {
+    const record = row as Record<string, unknown>;
+    const userId = record.user_id ? String(record.user_id) : "";
+    const action = String(record.action ?? "event");
+    remoteAudit.push({
+      id: String(record.id),
+      orderId: record.order_id ? String(record.order_id) : undefined,
+      actorId: userId || "system",
+      actorName: usersById.get(userId) ?? "Staff",
+      action,
+      detail: String(record.description ?? action),
+      emoji: action.includes("edit") ? "✏️" : action.includes("creat") ? "🟢" : "📋",
+      createdAt: String(record.created_at ?? new Date().toISOString()),
+    });
+  }
+
+  for (const row of packingRows) {
+    const record = row as Record<string, unknown>;
+    const orderId = record.order_id ? String(record.order_id) : undefined;
+    const userId = record.packing_user ? String(record.packing_user) : "";
+    const orderLabel = orderId ? orderNumberById.get(orderId) ?? orderId : "order";
+    if (record.accepted_at) {
+      remoteAudit.push({
+        id: `pack-accept-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName: usersById.get(userId) ?? "Packing",
+        action: "packing_accepted",
+        detail: `${usersById.get(userId) ?? "Packing"} accepted ${orderLabel} for packing`,
+        emoji: "📦",
+        createdAt: String(record.accepted_at),
+      });
+    }
+    if (record.ready_at) {
+      remoteAudit.push({
+        id: `pack-ready-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName: usersById.get(userId) ?? "Packing",
+        action: "ready_for_delivery",
+        detail: `${usersById.get(userId) ?? "Packing"} marked ${orderLabel} Ready for Delivery`,
+        emoji: "✅",
+        createdAt: String(record.ready_at),
+      });
+    }
+  }
+
+  for (const row of deliveryRows) {
+    const record = row as Record<string, unknown>;
+    const orderId = record.order_id ? String(record.order_id) : undefined;
+    const userId = record.delivery_user ? String(record.delivery_user) : "";
+    const actorName = usersById.get(userId) ?? "Delivery";
+    const orderLabel = orderId ? orderNumberById.get(orderId) ?? orderId : "order";
+    if (record.started_at) {
+      remoteAudit.push({
+        id: `del-start-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName,
+        action: "delivery_started",
+        detail: `${actorName} started delivery for ${orderLabel}`,
+        emoji: "🚚",
+        createdAt: String(record.started_at),
+      });
+    }
+    if (record.delivered_at) {
+      const status = String(record.status ?? "FULL").toUpperCase();
+      const outcome =
+        status.includes("PARTIAL")
+          ? "partial delivery"
+          : status.includes("RETURN")
+            ? "full return"
+            : "delivered";
+      remoteAudit.push({
+        id: `del-done-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName,
+        action: "delivery_completed",
+        detail: `${actorName} marked ${orderLabel} as ${outcome}`,
+        emoji: "🚚",
+        createdAt: String(record.delivered_at),
+      });
+    }
+  }
 
   return {
     customers,
     orders,
-    payments,
-    auditEvents: [],
+    payments: mergePayments(loadLivePayments(), payments),
+    auditEvents: mergeAuditEvents(loadLiveAuditEvents(), remoteAudit),
     nextOrderSequence: orders.length + 1,
   };
 }
 
+export async function recordLiveAuditLog(input: {
+  orderId?: string;
+  userId: string;
+  action: string;
+  description: string;
+}) {
+  if (!supabase) return;
+  const result = await supabase.from("audit_logs").insert({
+    order_id: input.orderId ?? null,
+    user_id: input.userId,
+    action: input.action,
+    description: input.description,
+  });
+  if (result.error) {
+    // RLS may block inserts; local timeline still records the event.
+  }
+}
+
 async function findOrCreateCustomer(input: {
   name: string;
-  contactPerson: string;
-  mobile: string;
-  address: string;
+  contactPerson?: string;
+  mobile?: string;
+  address?: string;
   gst?: string;
 }) {
   if (!supabase) throw new Error("Supabase missing");
@@ -270,15 +467,33 @@ async function findOrCreateCustomer(input: {
     .limit(1)
     .maybeSingle();
 
-  if (existing.data) return mapCustomer(existing.data as Record<string, unknown>);
+  if (existing.data) {
+    const patch: Record<string, string> = {};
+    if (input.contactPerson?.trim()) patch.contact_person = input.contactPerson.trim();
+    if (input.mobile?.trim()) patch.phone = input.mobile.trim();
+    if (input.address?.trim()) patch.address = input.address.trim();
+    if (input.gst?.trim()) patch.gst_number = input.gst.trim();
+
+    if (Object.keys(patch).length) {
+      const updated = await supabase
+        .from("customers")
+        .update(patch)
+        .eq("id", existing.data.id)
+        .select("*")
+        .single();
+      if (updated.data) return mapCustomer(updated.data as Record<string, unknown>);
+    }
+
+    return mapCustomer(existing.data as Record<string, unknown>);
+  }
 
   const inserted = await supabase
     .from("customers")
     .insert({
       customer_name: name,
-      contact_person: input.contactPerson.trim() || name,
-      phone: input.mobile.trim() || null,
-      address: input.address.trim() || "",
+      contact_person: input.contactPerson?.trim() || null,
+      phone: input.mobile?.trim() || null,
+      address: input.address?.trim() || null,
       gst_number: input.gst?.trim() || null,
     })
     .select("*")
@@ -298,7 +513,7 @@ export async function createLiveCustomer(input: CustomerInput) {
       customer_name: input.name.trim(),
       contact_person: input.name.trim(),
       phone: input.mobile?.trim() || null,
-      address: "",
+      address: null,
       gst_number: input.gst?.trim() || null,
     })
     .select("*")
@@ -457,39 +672,111 @@ export async function updateLiveOrderItemsQuantities(
   }
 }
 
+export async function uploadLiveDeliveryDocuments(
+  orderId: string,
+  docs: Array<{ name: string; dataUrl: string; mimeType?: string }>,
+  uploadedBy: string,
+) {
+  if (!supabase || !docs.length) return;
+
+  const rows = docs.map((doc) => ({
+    order_id: orderId,
+    image_url: doc.dataUrl,
+    file_name: doc.name,
+    mime_type: doc.mimeType || "image/jpeg",
+    uploaded_by: uploadedBy,
+    document_type: "delivery_bill",
+  }));
+
+  const inserted = await supabase.from("delivery_documents").insert(rows).select("*");
+  if (inserted.error) throw inserted.error;
+}
+
 export async function createLivePayment(input: PaymentInput, actor: UserProfile) {
   if (!supabase) throw new Error("Supabase missing");
 
-  const customer = await findOrCreateCustomer({
-    name: input.customerName,
-    contactPerson: input.customerName,
-    mobile: "",
-    address: "",
-  });
-
-  const inserted = await supabase
-    .from("payments")
-    .insert({
-      customer_id: customer.id,
-      amount: input.amount,
-      payment_mode: input.mode,
-      invoice_number: input.invoiceNumber,
-      invoice_date: input.invoiceDate || null,
-      notes: input.notes || null,
-      received_by: actor.id,
-    })
-    .select("*")
-    .single();
-
-  if (inserted.error || !inserted.data) {
-    throw inserted.error ?? new Error("Payment create failed");
+  if (input.mode === "cheque" && !input.chequeNumber?.trim()) {
+    throw new Error("Cheque number is required for cheque payments");
   }
 
-  return mapPayment(
-    inserted.data as Record<string, unknown>,
-    customer.name,
-    new Map(SUPABASE_USERS.map((user) => [user.id, user.name])),
-  );
+  const paymentDate = input.paymentDate || input.invoiceDate || new Date().toISOString().slice(0, 10);
+
+  // Live DB blocks direct inserts on public.payments (RLS). Use the existing SECURITY DEFINER RPC.
+  const rpc = await supabase.rpc("record_nt_payment", {
+    p_customer_name: input.customerName.trim(),
+    p_amount: input.amount,
+    p_payment_mode: LIVE_PAYMENT_MODE[input.mode],
+    p_invoice_number: input.invoiceNumber.trim() || null,
+    p_invoice_date: input.invoiceDate || null,
+    p_payment_date: paymentDate,
+    p_notes: input.notes?.trim() || null,
+    p_cheque_number: input.mode === "cheque" ? input.chequeNumber?.trim() || null : null,
+  });
+
+  if (rpc.error || !rpc.data) {
+    const message =
+      rpc.error && typeof rpc.error === "object" && "message" in rpc.error
+        ? String((rpc.error as { message?: string }).message || "Payment create failed")
+        : "Payment create failed";
+    throw new Error(message);
+  }
+
+  const paymentId = String(rpc.data);
+  const now = new Date().toISOString();
+  const documents = (input.files ?? []).map((file, index) => ({
+    id: `${paymentId}-doc-${index}`,
+    name: file.name,
+    kind: file.kind,
+    dataUrl: file.dataUrl,
+    uploadedAt: now,
+    uploadedBy: actor.name,
+    paymentId,
+    orderId: input.orderId,
+  }));
+
+  // Best-effort attach into payment_documents when Auth + RPC policy allow it.
+  for (const file of input.files ?? []) {
+    const mime =
+      file.dataUrl.startsWith("data:") && file.dataUrl.includes(";")
+        ? file.dataUrl.slice(5, file.dataUrl.indexOf(";"))
+        : "application/octet-stream";
+    const attached = await supabase.rpc("attach_nt_payment_document", {
+      p_payment_id: paymentId,
+      p_file_name: file.name,
+      p_file_path: file.dataUrl,
+      p_mime_type: mime,
+    });
+    if (attached.error) {
+      // Local payment list still keeps the preview via documents[].
+      console.warn("Payment proof attach skipped:", attached.error.message);
+    }
+  }
+
+  // Best-effort readback; RLS may hide the row from the publishable key.
+  const fetched = await supabase.from("payments").select("*").eq("id", paymentId).maybeSingle();
+  if (fetched.data) {
+    const record = fetched.data as Record<string, unknown>;
+    const mapped = mapPayment(
+      record,
+      input.customerName.trim(),
+      new Map(SUPABASE_USERS.map((user) => [user.id, user.name])),
+    );
+    return { ...mapped, documents };
+  }
+
+  return {
+    id: paymentId,
+    customerName: input.customerName.trim(),
+    invoiceNumber: input.invoiceNumber.trim(),
+    invoiceDate: input.invoiceDate,
+    amount: input.amount,
+    mode: input.mode,
+    orderId: input.orderId,
+    notes: input.notes,
+    documents,
+    collectedBy: actor.name,
+    createdAt: now,
+  } satisfies Payment;
 }
 
 export function userForRole(role: Role): UserProfile {
@@ -506,6 +793,9 @@ export function subscribeLiveChanges(onChange: () => void) {
     .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "audit_logs" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "packing_events" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "delivery_events" }, onChange)
     .subscribe();
 
   return () => {

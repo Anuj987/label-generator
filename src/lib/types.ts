@@ -37,6 +37,8 @@ export type Customer = {
   mobile?: string;
   gst?: string;
   notes?: string;
+  contactPerson?: string;
+  address?: string;
   createdAt: string;
 };
 
@@ -165,13 +167,13 @@ export type OrderProductInput = {
 };
 
 export type CreateOrderInput = {
-  invoiceNumber: string;
+  invoiceNumber?: string;
   invoiceDate: string;
   deliveryDate: string;
   customerName: string;
-  contactPerson: string;
-  mobile: string;
-  address: string;
+  contactPerson?: string;
+  mobile?: string;
+  address?: string;
   gst?: string;
   priority: Priority;
   notes?: string;
@@ -189,5 +191,7 @@ export type PaymentInput = {
   mode: PaymentMode;
   orderId?: string;
   notes?: string;
+  chequeNumber?: string;
+  paymentDate?: string;
   files?: { name: string; kind: DocumentKind; dataUrl: string }[];
 };

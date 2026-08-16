@@ -6,7 +6,10 @@ import {
   ReactNode,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
+  useEffect,
+  useState,
 } from "react";
+import { X } from "lucide-react";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -204,5 +207,112 @@ export function StatCard({ label, value }: { label: string; value: string | numb
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
     </div>
+  );
+}
+
+function isImageSrc(src: string) {
+  return (
+    src.startsWith("data:image/") ||
+    /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(src) ||
+    src.includes("image/")
+  );
+}
+
+export function PhotoLightbox({
+  src,
+  title,
+  onClose,
+}: {
+  src: string | null;
+  title?: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!src) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [src, onClose]);
+
+  if (!src) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title || "Photo preview"}
+    >
+      <div
+        className="relative max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <p className="truncate text-sm font-medium text-slate-800">{title || "Photo"}</p>
+          <Button type="button" variant="ghost" onClick={onClose} aria-label="Close photo">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="max-h-[80vh] overflow-auto bg-slate-100 p-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={title || "Photo"} className="mx-auto max-h-[75vh] w-auto max-w-full object-contain" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function PhotoThumbGrid({
+  items,
+  emptyLabel = "No photos yet",
+}: {
+  items: Array<{ id: string; src: string; title: string }>;
+  emptyLabel?: string;
+}) {
+  const [active, setActive] = useState<{ src: string; title: string } | null>(null);
+
+  if (!items.length) {
+    return <p className="text-xs text-slate-400">{emptyLabel}</p>;
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {items.map((item) => {
+          const image = isImageSrc(item.src);
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActive({ src: item.src, title: item.title })}
+              className="block overflow-hidden rounded-2xl border border-slate-200 bg-white text-left transition hover:border-teal-400"
+            >
+              {image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={item.src} alt={item.title} className="h-28 w-full object-cover" />
+              ) : (
+                <div className="flex h-28 items-center justify-center px-2 text-center text-xs text-teal-700">
+                  {item.title}
+                </div>
+              )}
+              <p className="truncate px-2 py-1 text-xs text-slate-600">{item.title}</p>
+            </button>
+          );
+        })}
+      </div>
+      <PhotoLightbox
+        src={active?.src ?? null}
+        title={active?.title}
+        onClose={() => setActive(null)}
+      />
+    </>
   );
 }
