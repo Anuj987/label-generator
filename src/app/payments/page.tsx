@@ -255,20 +255,40 @@ export default function PaymentsPage() {
                   </div>
                 </div>
                 {payment.documents.length ? (
-                  <div className="mt-3 space-y-1">
-                    {payment.documents.map((doc) => (
-                      <a
-                        key={doc.id}
-                        href={doc.dataUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block text-sm text-teal-700 hover:underline"
-                      >
-                        {doc.name}
-                      </a>
-                    ))}
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {payment.documents.map((doc) => {
+                      const isImage =
+                        doc.dataUrl.startsWith("data:image/") ||
+                        /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(doc.dataUrl) ||
+                        doc.dataUrl.includes("image/");
+                      return (
+                        <a
+                          key={doc.id}
+                          href={doc.dataUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block overflow-hidden rounded-2xl border border-slate-200 bg-white"
+                        >
+                          {isImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={doc.dataUrl}
+                              alt={doc.name}
+                              className="h-28 w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-28 items-center justify-center px-2 text-center text-xs text-teal-700">
+                              {doc.name}
+                            </div>
+                          )}
+                          <p className="truncate px-2 py-1 text-xs text-slate-600">{doc.name}</p>
+                        </a>
+                      );
+                    })}
                   </div>
-                ) : null}
+                ) : (
+                  <p className="mt-3 text-xs text-slate-400">No proof photo attached</p>
+                )}
               </div>
             ))}
             {!filtered.length ? <EmptyState title="No payments yet" /> : null}

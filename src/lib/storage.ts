@@ -85,7 +85,19 @@ export function mergePayments(...groups: Payment[][]): Payment[] {
   const byId = new Map<string, Payment>();
   for (const group of groups) {
     for (const payment of group) {
-      byId.set(payment.id, payment);
+      const existing = byId.get(payment.id);
+      if (!existing) {
+        byId.set(payment.id, payment);
+        continue;
+      }
+      byId.set(payment.id, {
+        ...existing,
+        ...payment,
+        documents:
+          (payment.documents?.length ?? 0) >= (existing.documents?.length ?? 0)
+            ? payment.documents
+            : existing.documents,
+      });
     }
   }
   return [...byId.values()].sort(

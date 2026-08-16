@@ -224,12 +224,13 @@ export async function loadLiveState(): Promise<AppState> {
 
   const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
 
-  const [customersRes, ordersRes, itemsRes, paymentsRes, auditRes, packingRes, deliveryRes] =
+  const [customersRes, ordersRes, itemsRes, paymentsRes, docsRes, auditRes, packingRes, deliveryRes] =
     await Promise.all([
       supabase.from("customers").select("*").order("created_at", { ascending: false }),
       supabase.from("orders").select("*, customers(*)").order("created_at", { ascending: false }),
       supabase.from("order_items").select("*"),
       supabase.from("payments").select("*").order("created_at", { ascending: false }),
+      supabase.from("payment_documents").select("*").order("uploaded_at", { ascending: false }).limit(500),
       supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200),
       supabase.from("packing_events").select("*").order("accepted_at", { ascending: false }).limit(200),
       supabase.from("delivery_events").select("*").order("delivered_at", { ascending: false }).limit(200),
@@ -240,6 +241,7 @@ export async function loadLiveState(): Promise<AppState> {
   if (itemsRes.error) throw itemsRes.error;
   // Payments may be empty / RLS readable
   const paymentsRows = paymentsRes.error ? [] : paymentsRes.data ?? [];
+  const paymentDocRows = docsRes.error ? [] : docsRes.data ?? [];
   const auditRows = auditRes.error ? [] : auditRes.data ?? [];
   const packingRows = packingRes.error ? [] : packingRes.data ?? [];
   const deliveryRows = deliveryRes.error ? [] : deliveryRes.data ?? [];
@@ -266,10 +268,36 @@ export async function loadLiveState(): Promise<AppState> {
   });
   const orderNumberById = new Map(orders.map((order) => [order.id, order.orderNumber]));
 
+  const docsByPayment = new Map<string, Payment["documents"]>();
+  for (const row of paymentDocRows) {
+    const record = row as Record<string, unknown>;
+    const paymentId = record.payment_id ? String(record.payment_id) : "";
+    if (!paymentId) continue;
+    const imageUrl = String(record.image_url ?? "");
+    if (!imageUrl) continue;
+    const list = docsByPayment.get(paymentId) ?? [];
+    list.push({
+      id: String(record.id),
+      name: String(record.file_name ?? "payment-proof"),
+      kind: "payment_proof",
+      dataUrl: imageUrl,
+      uploadedAt: String(record.uploaded_at ?? new Date().toISOString()),
+      uploadedBy: record.uploaded_by
+        ? usersById.get(String(record.uploaded_by)) ?? "Staff"
+        : "Staff",
+      paymentId,
+    });
+    docsByPayment.set(paymentId, list);
+  }
+
   const payments = paymentsRows.map((row) => {
     const record = row as Record<string, unknown>;
     const customerId = String(record.customer_id ?? "");
-    return mapPayment(record, customerNameById.get(customerId) ?? "Customer", usersById);
+    const mapped = mapPayment(record, customerNameById.get(customerId) ?? "Customer", usersById);
+    return {
+      ...mapped,
+      documents: docsByPayment.get(mapped.id) ?? [],
+    };
   });
 
   const remoteAudit: AuditEvent[] = [];
@@ -634,12 +662,46 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
   }
 
   const paymentId = String(rpc.data);
+  const now = new Date().toISOString();
+  const documents = (input.files ?? []).map((file, index) => ({
+    id: `${paymentId}-doc-${index}`,
+    name: file.name,
+    kind: file.kind,
+    dataUrl: file.dataUrl,
+    uploadedAt: now,
+    uploadedBy: actor.name,
+    paymentId,
+    orderId: input.orderId,
+  }));
+
+  // Best-effort attach into payment_documents when Auth + RPC policy allow it.
+  for (const file of input.files ?? []) {
+    const mime =
+      file.dataUrl.startsWith("data:") && file.dataUrl.includes(";")
+        ? file.dataUrl.slice(5, file.dataUrl.indexOf(";"))
+        : "application/octet-stream";
+    const attached = await supabase.rpc("attach_nt_payment_document", {
+      p_payment_id: paymentId,
+      p_file_name: file.name,
+      p_file_path: file.dataUrl,
+      p_mime_type: mime,
+    });
+    if (attached.error) {
+      // Local payment list still keeps the preview via documents[].
+      console.warn("Payment proof attach skipped:", attached.error.message);
+    }
+  }
 
   // Best-effort readback; RLS may hide the row from the publishable key.
   const fetched = await supabase.from("payments").select("*").eq("id", paymentId).maybeSingle();
   if (fetched.data) {
     const record = fetched.data as Record<string, unknown>;
-    return mapPayment(record, input.customerName.trim(), new Map(SUPABASE_USERS.map((user) => [user.id, user.name])));
+    const mapped = mapPayment(
+      record,
+      input.customerName.trim(),
+      new Map(SUPABASE_USERS.map((user) => [user.id, user.name])),
+    );
+    return { ...mapped, documents };
   }
 
   return {
@@ -651,9 +713,9 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
     mode: input.mode,
     orderId: input.orderId,
     notes: input.notes,
-    documents: [],
+    documents,
     collectedBy: actor.name,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
   } satisfies Payment;
 }
 
