@@ -71,11 +71,15 @@ export default function OrdersPage() {
 
   const suggestions = useMemo(() => {
     const search = form.customerName.trim().toLowerCase();
-    if (search.length < 1) return [];
-    return state.customers
-      .filter((customer) => customer.name.toLowerCase().includes(search))
-      .slice(0, 8);
+    const list = [...state.customers].sort((a, b) => a.name.localeCompare(b.name));
+    if (!search) return list.slice(0, 20);
+    return list.filter((customer) => customer.name.toLowerCase().includes(search)).slice(0, 20);
   }, [form.customerName, state.customers]);
+
+  const customersSorted = useMemo(
+    () => [...state.customers].sort((a, b) => a.name.localeCompare(b.name)),
+    [state.customers],
+  );
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -94,14 +98,18 @@ export default function OrdersPage() {
     };
   }, []);
 
-  function applyCustomerSuggestion(name: string) {
-    const match = state.customers.find((customer) => customer.name === name);
+  function applyCustomerSuggestion(customerIdOrName: string) {
+    const match =
+      state.customers.find((customer) => customer.id === customerIdOrName) ??
+      state.customers.find((customer) => customer.name === customerIdOrName);
+    if (!match) return;
     setForm((previous) => ({
       ...previous,
-      customerName: name,
-      contactPerson: previous.contactPerson || name,
-      mobile: match?.mobile || previous.mobile,
-      gst: match?.gst || previous.gst,
+      customerName: match.name,
+      contactPerson: match.contactPerson || "",
+      mobile: match.mobile || "",
+      address: match.address || "",
+      gst: match.gst || "",
     }));
     setCustomerMenuOpen(false);
   }
@@ -112,6 +120,10 @@ export default function OrdersPage() {
 
     const order = await createOrder({
       ...form,
+      contactPerson: form.contactPerson.trim() || undefined,
+      mobile: form.mobile.trim() || undefined,
+      address: form.address.trim() || undefined,
+      invoiceNumber: form.invoiceNumber.trim() || undefined,
       gst: form.gst || undefined,
       notes: form.notes || undefined,
       billingSource: form.billingSource || undefined,
@@ -172,38 +184,57 @@ export default function OrdersPage() {
       <SectionCard
         title="Create order"
         titleClassName="text-2xl sm:text-3xl tracking-tight"
-        description="Fill customer, invoice, delivery date, and product lines. Purchase price stays admin-only."
+        description="Select a customer from your list (or type a new name). Contact, mobile, address, and invoice number are optional."
         className="border-teal-300/80 bg-gradient-to-br from-teal-50 via-white to-slate-50 p-5 shadow-md shadow-teal-900/5 sm:p-7"
       >
         <form className="grid gap-5" onSubmit={handleSubmit}>
+          <Select
+            label="Select customer"
+            value={customersSorted.find((customer) => customer.name === form.customerName)?.id ?? ""}
+            onChange={(event) => {
+              const id = event.target.value;
+              if (!id) return;
+              applyCustomerSuggestion(id);
+            }}
+          >
+            <option value="">Choose from {customersSorted.length} customers…</option>
+            {customersSorted.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.name}
+                {customer.mobile ? ` · ${customer.mobile}` : ""}
+              </option>
+            ))}
+          </Select>
+
           <div className="relative" ref={customerFieldRef}>
             <Input
               label="Customer name"
               required
               autoComplete="off"
               value={form.customerName}
-              onFocus={() => {
-                if (form.customerName.trim().length > 0) setCustomerMenuOpen(true);
-              }}
+              onFocus={() => setCustomerMenuOpen(true)}
               onChange={(event) => {
                 setForm((previous) => ({ ...previous, customerName: event.target.value }));
                 setCustomerMenuOpen(true);
               }}
-              placeholder="Type name — suggestions appear from your list"
+              placeholder="Or type a new / existing name"
             />
             {customerMenuOpen && suggestions.length ? (
-              <div className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+              <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
                 {suggestions.map((customer) => (
                   <button
                     key={customer.id}
                     type="button"
                     className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-slate-50"
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => applyCustomerSuggestion(customer.name)}
+                    onClick={() => applyCustomerSuggestion(customer.id)}
                   >
                     <span className="font-medium text-slate-900">{customer.name}</span>
                     {customer.mobile ? (
                       <span className="ml-2 text-slate-500">{customer.mobile}</span>
+                    ) : null}
+                    {customer.address ? (
+                      <span className="mt-0.5 block text-xs text-slate-400">{customer.address}</span>
                     ) : null}
                   </button>
                 ))}
@@ -213,16 +244,14 @@ export default function OrdersPage() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
-              label="Contact person"
-              required
+              label="Contact person (optional)"
               value={form.contactPerson}
               onChange={(event) =>
                 setForm((previous) => ({ ...previous, contactPerson: event.target.value }))
               }
             />
             <Input
-              label="Mobile"
-              required
+              label="Mobile (optional)"
               value={form.mobile}
               onChange={(event) =>
                 setForm((previous) => ({ ...previous, mobile: event.target.value }))
@@ -231,8 +260,7 @@ export default function OrdersPage() {
           </div>
 
           <TextArea
-            label="Address"
-            required
+            label="Address (optional)"
             rows={3}
             value={form.address}
             onChange={(event) =>
@@ -248,8 +276,7 @@ export default function OrdersPage() {
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Input
-              label="Invoice number"
-              required
+              label="Invoice number (optional)"
               value={form.invoiceNumber}
               onChange={(event) =>
                 setForm((previous) => ({ ...previous, invoiceNumber: event.target.value }))

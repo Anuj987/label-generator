@@ -103,6 +103,8 @@ function mapCustomer(row: Record<string, unknown>): Customer {
     name: String(row.customer_name ?? ""),
     mobile: row.phone ? String(row.phone) : undefined,
     gst: row.gst_number ? String(row.gst_number) : undefined,
+    contactPerson: row.contact_person ? String(row.contact_person) : undefined,
+    address: row.address ? String(row.address) : undefined,
     notes: undefined,
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
@@ -256,9 +258,9 @@ export async function loadLiveState(): Promise<AppState> {
 
 async function findOrCreateCustomer(input: {
   name: string;
-  contactPerson: string;
-  mobile: string;
-  address: string;
+  contactPerson?: string;
+  mobile?: string;
+  address?: string;
   gst?: string;
 }) {
   if (!supabase) throw new Error("Supabase missing");
@@ -270,15 +272,33 @@ async function findOrCreateCustomer(input: {
     .limit(1)
     .maybeSingle();
 
-  if (existing.data) return mapCustomer(existing.data as Record<string, unknown>);
+  if (existing.data) {
+    const patch: Record<string, string> = {};
+    if (input.contactPerson?.trim()) patch.contact_person = input.contactPerson.trim();
+    if (input.mobile?.trim()) patch.phone = input.mobile.trim();
+    if (input.address?.trim()) patch.address = input.address.trim();
+    if (input.gst?.trim()) patch.gst_number = input.gst.trim();
+
+    if (Object.keys(patch).length) {
+      const updated = await supabase
+        .from("customers")
+        .update(patch)
+        .eq("id", existing.data.id)
+        .select("*")
+        .single();
+      if (updated.data) return mapCustomer(updated.data as Record<string, unknown>);
+    }
+
+    return mapCustomer(existing.data as Record<string, unknown>);
+  }
 
   const inserted = await supabase
     .from("customers")
     .insert({
       customer_name: name,
-      contact_person: input.contactPerson.trim() || name,
-      phone: input.mobile.trim() || null,
-      address: input.address.trim() || "",
+      contact_person: input.contactPerson?.trim() || null,
+      phone: input.mobile?.trim() || null,
+      address: input.address?.trim() || null,
       gst_number: input.gst?.trim() || null,
     })
     .select("*")
@@ -298,7 +318,7 @@ export async function createLiveCustomer(input: CustomerInput) {
       customer_name: input.name.trim(),
       contact_person: input.name.trim(),
       phone: input.mobile?.trim() || null,
-      address: "",
+      address: null,
       gst_number: input.gst?.trim() || null,
     })
     .select("*")
