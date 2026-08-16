@@ -32,13 +32,18 @@ import {
   appendLiveAuditEvent,
   appendLivePayment,
   fileToDataUrl,
+  loadLiveAuditEvents,
+  loadLivePayments,
   loadState,
   mergeAuditEvents,
   mergePayments,
   minutesBetween,
+  saveLiveAuditEvents,
+  saveLivePayments,
   saveState,
   setRoleCookie,
 } from "@/lib/storage";
+import { fetchOpsSync, publishOpsSync } from "@/lib/ops-sync";
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import type {
   AppState,
@@ -112,16 +117,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshLive = useCallback(async () => {
     if (!liveMode) return;
-    const live = await loadLiveState();
+    const [live, sync] = await Promise.all([loadLiveState(), fetchOpsSync()]);
+    // Keep local caches aligned with shared sync so phones see the same payments/activity.
+    if (sync.sync) {
+      saveLivePayments(mergePayments(sync.payments, loadLivePayments()));
+      saveLiveAuditEvents(mergeAuditEvents(sync.events, loadLiveAuditEvents()));
+    }
     setState((previous) => ({
       ...live,
-      auditEvents: mergeAuditEvents(previous.auditEvents, live.auditEvents),
-      payments: mergePayments(previous.payments, live.payments),
+      auditEvents: mergeAuditEvents(
+        previous.auditEvents,
+        live.auditEvents,
+        sync.events,
+        loadLiveAuditEvents(),
+      ),
+      payments: mergePayments(previous.payments, live.payments, sync.payments, loadLivePayments()),
     }));
   }, [liveMode]);
 
   function rememberLiveEvent(event: AuditEvent) {
     appendLiveAuditEvent(event);
+    void publishOpsSync({ event });
     setState((previous) => ({
       ...previous,
       auditEvents: mergeAuditEvents([event], previous.auditEvents),
@@ -140,8 +156,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (liveMode) {
           const profile = await getSessionStaffProfile();
           if (!cancelled) setCurrentUser(profile);
-          const live = await loadLiveState();
-          if (!cancelled) setState(live);
+          const [live, sync] = await Promise.all([loadLiveState(), fetchOpsSync()]);
+          if (sync.sync) {
+            const localPayments = loadLivePayments();
+            const localEvents = loadLiveAuditEvents();
+            // Upload any device-local payments/events so other phones can see them.
+            if (localPayments.length || localEvents.length) {
+              await publishOpsSync({ payments: localPayments, events: localEvents });
+            }
+            saveLivePayments(mergePayments(sync.payments, localPayments));
+            saveLiveAuditEvents(mergeAuditEvents(sync.events, localEvents));
+          }
+          if (!cancelled) {
+            setState({
+              ...live,
+              payments: mergePayments(live.payments, sync.payments, loadLivePayments()),
+              auditEvents: mergeAuditEvents(live.auditEvents, sync.events, loadLiveAuditEvents()),
+            });
+          }
 
           if (supabase) {
             const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -772,10 +804,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           action: "payment_collected",
           description: event.detail,
         });
+        await publishOpsSync({ payment, event });
         await refreshLive();
         setState((previous) => ({
           ...previous,
           payments: mergePayments([payment], previous.payments),
+          auditEvents: mergeAuditEvents([event], previous.auditEvents),
         }));
         return;
       }

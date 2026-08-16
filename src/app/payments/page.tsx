@@ -235,7 +235,7 @@ export default function PaymentsPage() {
           </form>
         </SectionCard>
 
-        <SectionCard title="Payment list" description="Search by typed customer name or invoice number.">
+        <SectionCard title="Payment list" description="Shared across phones. Search by customer or invoice.">
           <Input
             label="Search"
             value={query}
@@ -276,6 +276,27 @@ export default function PaymentsPage() {
           </div>
         </SectionCard>
       </div>
+
+      <SectionCard title="Payment activity" description="Recent payment collections (all devices).">
+        <div className="space-y-3">
+          {state.auditEvents
+            .filter((event) => event.action === "payment_collected")
+            .slice(0, 12)
+            .map((event) => (
+              <div key={event.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm font-medium text-slate-900">
+                  {event.emoji} {event.detail}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {event.actorName} · {formatDateTime(event.createdAt)}
+                </p>
+              </div>
+            ))}
+          {!state.auditEvents.some((event) => event.action === "payment_collected") ? (
+            <EmptyState title="No payment activity yet" description="Saved payments will appear here on all phones." />
+          ) : null}
+        </div>
+      </SectionCard>
     </div>
   );
 }

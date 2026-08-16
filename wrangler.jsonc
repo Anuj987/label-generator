@@ -9,6 +9,13 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "kv_namespaces": [
+    {
+      "binding": "NT_OPS_SYNC",
+      "id": "664d1c5473aa4696bd331d993a8dc1e9",
+      "preview_id": "6880292455094ef59f45ef4af146b2c6"
+    }
+  ],
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
