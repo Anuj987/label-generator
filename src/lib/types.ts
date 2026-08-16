@@ -191,5 +191,7 @@ export type PaymentInput = {
   mode: PaymentMode;
   orderId?: string;
   notes?: string;
+  chequeNumber?: string;
+  paymentDate?: string;
   files?: { name: string; kind: DocumentKind; dataUrl: string }[];
 };

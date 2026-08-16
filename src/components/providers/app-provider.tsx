@@ -29,9 +29,11 @@ import {
 } from "@/lib/supabase-data";
 import {
   appendLiveAuditEvent,
+  appendLivePayment,
   fileToDataUrl,
   loadState,
   mergeAuditEvents,
+  mergePayments,
   minutesBetween,
   saveState,
   setRoleCookie,
@@ -113,6 +115,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState((previous) => ({
       ...live,
       auditEvents: mergeAuditEvents(previous.auditEvents, live.auditEvents),
+      payments: mergePayments(previous.payments, live.payments),
     }));
   }, [liveMode]);
 
@@ -709,8 +712,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (currentUser.role === "packing") return;
 
       if (liveMode) {
-        await createLivePayment(input, currentUser);
+        const payment = await createLivePayment(input, currentUser);
+        appendLivePayment(payment);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          paymentId: payment.id,
+          orderId: input.orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "payment_collected",
+          detail: `Payment of ₹${input.amount.toLocaleString("en-IN")} collected from ${payment.customerName}`,
+          emoji: "💰",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId: input.orderId,
+          userId: currentUser.id,
+          action: "payment_collected",
+          description: event.detail,
+        });
         await refreshLive();
+        setState((previous) => ({
+          ...previous,
+          payments: mergePayments([payment], previous.payments),
+        }));
         return;
       }
 

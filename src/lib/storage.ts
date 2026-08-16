@@ -1,8 +1,9 @@
-import type { AppState, AuditEvent, Role } from "@/lib/types";
+import type { AppState, AuditEvent, Payment, Role } from "@/lib/types";
 import { createInitialState } from "@/lib/demo-data";
 
 const STORAGE_KEY = "nt-operations-console-v4";
 const LIVE_AUDIT_KEY = "nt-live-audit-events-v1";
+const LIVE_PAYMENTS_KEY = "nt-live-payments-v1";
 const ROLE_COOKIE = "nt_role";
 
 export function loadState(): AppState {
@@ -50,6 +51,41 @@ export function mergeAuditEvents(...groups: AuditEvent[][]): AuditEvent[] {
   for (const group of groups) {
     for (const event of group) {
       byId.set(event.id, event);
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
+export function loadLivePayments(): Payment[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LIVE_PAYMENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Payment[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLivePayments(payments: Payment[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LIVE_PAYMENTS_KEY, JSON.stringify(payments.slice(0, 300)));
+}
+
+export function appendLivePayment(payment: Payment) {
+  const next = [payment, ...loadLivePayments().filter((item) => item.id !== payment.id)];
+  saveLivePayments(next);
+  return next;
+}
+
+export function mergePayments(...groups: Payment[][]): Payment[] {
+  const byId = new Map<string, Payment>();
+  for (const group of groups) {
+    for (const payment of group) {
+      byId.set(payment.id, payment);
     }
   }
   return [...byId.values()].sort(

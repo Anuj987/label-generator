@@ -17,12 +17,16 @@ import type { DocumentKind, PaymentMode } from "@/lib/types";
 export default function PaymentsPage() {
   const { currentUser, recordPayment, state } = useAppContext();
   const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     customerName: "",
     invoiceNumber: "",
     invoiceDate: new Date().toISOString().slice(0, 10),
+    paymentDate: new Date().toISOString().slice(0, 10),
     amount: "",
     mode: "cash" as PaymentMode,
+    chequeNumber: "",
     orderId: "",
     notes: "",
   });
@@ -53,6 +57,13 @@ export default function PaymentsPage() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!form.customerName.trim() || !form.amount) return;
+    if (form.mode === "cheque" && !form.chequeNumber.trim()) {
+      setError("Cheque number is required for cheque payments.");
+      return;
+    }
+
+    setError(null);
+    setSaving(true);
 
     const kindByMode: Record<PaymentMode, DocumentKind> = {
       cash: "receipt",
@@ -61,38 +72,49 @@ export default function PaymentsPage() {
       cheque: "cheque_photo",
     };
 
-    const uploaded = [];
-    if (files) {
-      for (const file of Array.from(files)) {
-        uploaded.push({
-          name: file.name,
-          kind: kindByMode[form.mode],
-          dataUrl: await fileToDataUrl(file),
-        });
+    try {
+      const uploaded = [];
+      if (files) {
+        for (const file of Array.from(files)) {
+          uploaded.push({
+            name: file.name,
+            kind: kindByMode[form.mode],
+            dataUrl: await fileToDataUrl(file),
+          });
+        }
       }
+
+      await recordPayment({
+        customerName: form.customerName,
+        invoiceNumber: form.invoiceNumber,
+        invoiceDate: form.invoiceDate,
+        paymentDate: form.paymentDate,
+        amount: Number(form.amount),
+        mode: form.mode,
+        chequeNumber: form.chequeNumber || undefined,
+        orderId: form.orderId || undefined,
+        notes: form.notes || undefined,
+        files: uploaded,
+      });
+
+      setForm({
+        customerName: "",
+        invoiceNumber: "",
+        invoiceDate: new Date().toISOString().slice(0, 10),
+        paymentDate: new Date().toISOString().slice(0, 10),
+        amount: "",
+        mode: "cash",
+        chequeNumber: "",
+        orderId: "",
+        notes: "",
+      });
+      setFiles(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save payment";
+      setError(message);
+    } finally {
+      setSaving(false);
     }
-
-    await recordPayment({
-      customerName: form.customerName,
-      invoiceNumber: form.invoiceNumber,
-      invoiceDate: form.invoiceDate,
-      amount: Number(form.amount),
-      mode: form.mode,
-      orderId: form.orderId || undefined,
-      notes: form.notes || undefined,
-      files: uploaded,
-    });
-
-    setForm({
-      customerName: "",
-      invoiceNumber: "",
-      invoiceDate: new Date().toISOString().slice(0, 10),
-      amount: "",
-      mode: "cash",
-      orderId: "",
-      notes: "",
-    });
-    setFiles(null);
   }
 
   return (
@@ -100,7 +122,7 @@ export default function PaymentsPage() {
       <PageHeader
         eyebrow="Payments"
         title="Payment collection"
-        description="Type the customer name each time. No customer list is saved."
+        description="Type a customer name or pick from suggestions. Invoice number is optional."
       />
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -123,8 +145,7 @@ export default function PaymentsPage() {
             </datalist>
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
-                label="Invoice number"
-                required
+                label="Invoice number (optional)"
                 value={form.invoiceNumber}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, invoiceNumber: event.target.value }))
@@ -137,6 +158,15 @@ export default function PaymentsPage() {
                 value={form.invoiceDate}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, invoiceDate: event.target.value }))
+                }
+              />
+              <Input
+                label="Payment date"
+                type="date"
+                required
+                value={form.paymentDate}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, paymentDate: event.target.value }))
                 }
               />
               <Input
@@ -159,6 +189,16 @@ export default function PaymentsPage() {
                 <option value="bank_transfer">Bank Transfer</option>
                 <option value="cheque">Cheque</option>
               </Select>
+              {form.mode === "cheque" ? (
+                <Input
+                  label="Cheque number"
+                  required
+                  value={form.chequeNumber}
+                  onChange={(event) =>
+                    setForm((previous) => ({ ...previous, chequeNumber: event.target.value }))
+                  }
+                />
+              ) : null}
             </div>
             <Select
               label="Link order (optional)"
@@ -183,7 +223,12 @@ export default function PaymentsPage() {
               value={form.notes}
               onChange={(event) => setForm((previous) => ({ ...previous, notes: event.target.value }))}
             />
-            <Button type="submit">Save payment</Button>
+            {error ? (
+              <p className="rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+            ) : null}
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save payment"}
+            </Button>
           </form>
         </SectionCard>
 
@@ -201,7 +246,7 @@ export default function PaymentsPage() {
                   <div>
                     <p className="font-semibold text-slate-950">{formatCurrency(payment.amount)}</p>
                     <p className="text-sm text-slate-600">
-                      {payment.customerName} · {payment.invoiceNumber}
+                      {payment.customerName} · {payment.invoiceNumber || "No invoice"}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {payment.mode.replace("_", " ")} · {payment.collectedBy} ·{" "}

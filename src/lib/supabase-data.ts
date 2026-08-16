@@ -1,6 +1,6 @@
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
-import { loadLiveAuditEvents, mergeAuditEvents } from "@/lib/storage";
+import { loadLiveAuditEvents, loadLivePayments, mergeAuditEvents, mergePayments } from "@/lib/storage";
 import type {
   AppState,
   AuditEvent,
@@ -165,6 +165,14 @@ function mapOrder(
   };
 }
 
+function mapPaymentMode(raw: unknown): Payment["mode"] {
+  const value = String(raw ?? "cash").trim().toLowerCase().replace(/\s+/g, "_");
+  if (value === "upi") return "upi";
+  if (value === "cheque") return "cheque";
+  if (value === "bank_transfer" || value === "banktransfer") return "bank_transfer";
+  return "cash";
+}
+
 function mapPayment(row: Record<string, unknown>, customerName: string, usersById: Map<string, string>): Payment {
   const receivedBy = row.received_by ? String(row.received_by) : "";
   return {
@@ -173,7 +181,7 @@ function mapPayment(row: Record<string, unknown>, customerName: string, usersByI
     invoiceNumber: String(row.invoice_number ?? ""),
     invoiceDate: String(row.invoice_date ?? ""),
     amount: Number(row.amount ?? 0),
-    mode: String(row.payment_mode ?? "cash").toLowerCase() as Payment["mode"],
+    mode: mapPaymentMode(row.payment_mode),
     orderId: undefined,
     notes: row.notes ? String(row.notes) : undefined,
     documents: [],
@@ -181,6 +189,13 @@ function mapPayment(row: Record<string, unknown>, customerName: string, usersByI
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
 }
+
+const LIVE_PAYMENT_MODE: Record<Payment["mode"], string> = {
+  cash: "Cash",
+  upi: "UPI",
+  bank_transfer: "Bank Transfer",
+  cheque: "Cheque",
+};
 
 function financialYearLabel(day = new Date()) {
   const year = day.getFullYear();
@@ -348,7 +363,7 @@ export async function loadLiveState(): Promise<AppState> {
   return {
     customers,
     orders,
-    payments,
+    payments: mergePayments(loadLivePayments(), payments),
     auditEvents: mergeAuditEvents(loadLiveAuditEvents(), remoteAudit),
     nextOrderSequence: orders.length + 1,
   };
@@ -596,36 +611,50 @@ export async function updateLiveOrderItemsQuantities(
 export async function createLivePayment(input: PaymentInput, actor: UserProfile) {
   if (!supabase) throw new Error("Supabase missing");
 
-  const customer = await findOrCreateCustomer({
-    name: input.customerName,
-    contactPerson: input.customerName,
-    mobile: "",
-    address: "",
-  });
-
-  const inserted = await supabase
-    .from("payments")
-    .insert({
-      customer_id: customer.id,
-      amount: input.amount,
-      payment_mode: input.mode,
-      invoice_number: input.invoiceNumber,
-      invoice_date: input.invoiceDate || null,
-      notes: input.notes || null,
-      received_by: actor.id,
-    })
-    .select("*")
-    .single();
-
-  if (inserted.error || !inserted.data) {
-    throw inserted.error ?? new Error("Payment create failed");
+  if (input.mode === "cheque" && !input.chequeNumber?.trim()) {
+    throw new Error("Cheque number is required for cheque payments");
   }
 
-  return mapPayment(
-    inserted.data as Record<string, unknown>,
-    customer.name,
-    new Map(SUPABASE_USERS.map((user) => [user.id, user.name])),
-  );
+  const paymentDate = input.paymentDate || input.invoiceDate || new Date().toISOString().slice(0, 10);
+
+  // Live DB blocks direct inserts on public.payments (RLS). Use the existing SECURITY DEFINER RPC.
+  const rpc = await supabase.rpc("record_nt_payment", {
+    p_customer_name: input.customerName.trim(),
+    p_amount: input.amount,
+    p_payment_mode: LIVE_PAYMENT_MODE[input.mode],
+    p_invoice_number: input.invoiceNumber.trim() || null,
+    p_invoice_date: input.invoiceDate || null,
+    p_payment_date: paymentDate,
+    p_notes: input.notes?.trim() || null,
+    p_cheque_number: input.mode === "cheque" ? input.chequeNumber?.trim() || null : null,
+  });
+
+  if (rpc.error || !rpc.data) {
+    throw rpc.error ?? new Error("Payment create failed");
+  }
+
+  const paymentId = String(rpc.data);
+
+  // Best-effort readback; RLS may hide the row from the publishable key.
+  const fetched = await supabase.from("payments").select("*").eq("id", paymentId).maybeSingle();
+  if (fetched.data) {
+    const record = fetched.data as Record<string, unknown>;
+    return mapPayment(record, input.customerName.trim(), new Map(SUPABASE_USERS.map((user) => [user.id, user.name])));
+  }
+
+  return {
+    id: paymentId,
+    customerName: input.customerName.trim(),
+    invoiceNumber: input.invoiceNumber.trim(),
+    invoiceDate: input.invoiceDate,
+    amount: input.amount,
+    mode: input.mode,
+    orderId: input.orderId,
+    notes: input.notes,
+    documents: [],
+    collectedBy: actor.name,
+    createdAt: new Date().toISOString(),
+  } satisfies Payment;
 }
 
 export function userForRole(role: Role): UserProfile {
