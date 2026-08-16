@@ -1,7 +1,9 @@
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
+import { loadLiveAuditEvents, mergeAuditEvents } from "@/lib/storage";
 import type {
   AppState,
+  AuditEvent,
   CreateOrderInput,
   Customer,
   CustomerInput,
@@ -207,18 +209,25 @@ export async function loadLiveState(): Promise<AppState> {
 
   const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
 
-  const [customersRes, ordersRes, itemsRes, paymentsRes] = await Promise.all([
-    supabase.from("customers").select("*").order("created_at", { ascending: false }),
-    supabase.from("orders").select("*, customers(*)").order("created_at", { ascending: false }),
-    supabase.from("order_items").select("*"),
-    supabase.from("payments").select("*").order("created_at", { ascending: false }),
-  ]);
+  const [customersRes, ordersRes, itemsRes, paymentsRes, auditRes, packingRes, deliveryRes] =
+    await Promise.all([
+      supabase.from("customers").select("*").order("created_at", { ascending: false }),
+      supabase.from("orders").select("*, customers(*)").order("created_at", { ascending: false }),
+      supabase.from("order_items").select("*"),
+      supabase.from("payments").select("*").order("created_at", { ascending: false }),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200),
+      supabase.from("packing_events").select("*").order("accepted_at", { ascending: false }).limit(200),
+      supabase.from("delivery_events").select("*").order("delivered_at", { ascending: false }).limit(200),
+    ]);
 
   if (customersRes.error) throw customersRes.error;
   if (ordersRes.error) throw ordersRes.error;
   if (itemsRes.error) throw itemsRes.error;
   // Payments may be empty / RLS readable
   const paymentsRows = paymentsRes.error ? [] : paymentsRes.data ?? [];
+  const auditRows = auditRes.error ? [] : auditRes.data ?? [];
+  const packingRows = packingRes.error ? [] : packingRes.data ?? [];
+  const deliveryRows = deliveryRes.error ? [] : deliveryRes.data ?? [];
 
   const customers = (customersRes.data ?? []).map((row) => mapCustomer(row as Record<string, unknown>));
   const itemsByOrder = new Map<string, Record<string, unknown>[]>();
@@ -240,6 +249,7 @@ export async function loadLiveState(): Promise<AppState> {
       usersById,
     );
   });
+  const orderNumberById = new Map(orders.map((order) => [order.id, order.orderNumber]));
 
   const payments = paymentsRows.map((row) => {
     const record = row as Record<string, unknown>;
@@ -247,13 +257,119 @@ export async function loadLiveState(): Promise<AppState> {
     return mapPayment(record, customerNameById.get(customerId) ?? "Customer", usersById);
   });
 
+  const remoteAudit: AuditEvent[] = [];
+
+  for (const row of auditRows) {
+    const record = row as Record<string, unknown>;
+    const userId = record.user_id ? String(record.user_id) : "";
+    const action = String(record.action ?? "event");
+    remoteAudit.push({
+      id: String(record.id),
+      orderId: record.order_id ? String(record.order_id) : undefined,
+      actorId: userId || "system",
+      actorName: usersById.get(userId) ?? "Staff",
+      action,
+      detail: String(record.description ?? action),
+      emoji: action.includes("edit") ? "✏️" : action.includes("creat") ? "🟢" : "📋",
+      createdAt: String(record.created_at ?? new Date().toISOString()),
+    });
+  }
+
+  for (const row of packingRows) {
+    const record = row as Record<string, unknown>;
+    const orderId = record.order_id ? String(record.order_id) : undefined;
+    const userId = record.packing_user ? String(record.packing_user) : "";
+    const orderLabel = orderId ? orderNumberById.get(orderId) ?? orderId : "order";
+    if (record.accepted_at) {
+      remoteAudit.push({
+        id: `pack-accept-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName: usersById.get(userId) ?? "Packing",
+        action: "packing_accepted",
+        detail: `${usersById.get(userId) ?? "Packing"} accepted ${orderLabel} for packing`,
+        emoji: "📦",
+        createdAt: String(record.accepted_at),
+      });
+    }
+    if (record.ready_at) {
+      remoteAudit.push({
+        id: `pack-ready-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName: usersById.get(userId) ?? "Packing",
+        action: "ready_for_delivery",
+        detail: `${usersById.get(userId) ?? "Packing"} marked ${orderLabel} Ready for Delivery`,
+        emoji: "✅",
+        createdAt: String(record.ready_at),
+      });
+    }
+  }
+
+  for (const row of deliveryRows) {
+    const record = row as Record<string, unknown>;
+    const orderId = record.order_id ? String(record.order_id) : undefined;
+    const userId = record.delivery_user ? String(record.delivery_user) : "";
+    const actorName = usersById.get(userId) ?? "Delivery";
+    const orderLabel = orderId ? orderNumberById.get(orderId) ?? orderId : "order";
+    if (record.started_at) {
+      remoteAudit.push({
+        id: `del-start-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName,
+        action: "delivery_started",
+        detail: `${actorName} started delivery for ${orderLabel}`,
+        emoji: "🚚",
+        createdAt: String(record.started_at),
+      });
+    }
+    if (record.delivered_at) {
+      const status = String(record.status ?? "FULL").toUpperCase();
+      const outcome =
+        status.includes("PARTIAL")
+          ? "partial delivery"
+          : status.includes("RETURN")
+            ? "full return"
+            : "delivered";
+      remoteAudit.push({
+        id: `del-done-${record.id}`,
+        orderId,
+        actorId: userId || "system",
+        actorName,
+        action: "delivery_completed",
+        detail: `${actorName} marked ${orderLabel} as ${outcome}`,
+        emoji: "🚚",
+        createdAt: String(record.delivered_at),
+      });
+    }
+  }
+
   return {
     customers,
     orders,
     payments,
-    auditEvents: [],
+    auditEvents: mergeAuditEvents(loadLiveAuditEvents(), remoteAudit),
     nextOrderSequence: orders.length + 1,
   };
+}
+
+export async function recordLiveAuditLog(input: {
+  orderId?: string;
+  userId: string;
+  action: string;
+  description: string;
+}) {
+  if (!supabase) return;
+  const result = await supabase.from("audit_logs").insert({
+    order_id: input.orderId ?? null,
+    user_id: input.userId,
+    action: input.action,
+    description: input.description,
+  });
+  if (result.error) {
+    // RLS may block inserts; local timeline still records the event.
+  }
 }
 
 async function findOrCreateCustomer(input: {
@@ -526,6 +642,9 @@ export function subscribeLiveChanges(onChange: () => void) {
     .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "audit_logs" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "packing_events" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "delivery_events" }, onChange)
     .subscribe();
 
   return () => {

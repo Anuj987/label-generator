@@ -1,7 +1,8 @@
-import type { AppState, Role } from "@/lib/types";
+import type { AppState, AuditEvent, Role } from "@/lib/types";
 import { createInitialState } from "@/lib/demo-data";
 
 const STORAGE_KEY = "nt-operations-console-v4";
+const LIVE_AUDIT_KEY = "nt-live-audit-events-v1";
 const ROLE_COOKIE = "nt_role";
 
 export function loadState(): AppState {
@@ -19,6 +20,41 @@ export function loadState(): AppState {
 export function saveState(state: AppState) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+export function loadLiveAuditEvents(): AuditEvent[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LIVE_AUDIT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as AuditEvent[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLiveAuditEvents(events: AuditEvent[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LIVE_AUDIT_KEY, JSON.stringify(events.slice(0, 500)));
+}
+
+export function appendLiveAuditEvent(event: AuditEvent) {
+  const next = [event, ...loadLiveAuditEvents().filter((item) => item.id !== event.id)];
+  saveLiveAuditEvents(next);
+  return next;
+}
+
+export function mergeAuditEvents(...groups: AuditEvent[][]): AuditEvent[] {
+  const byId = new Map<string, AuditEvent>();
+  for (const group of groups) {
+    for (const event of group) {
+      byId.set(event.id, event);
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
 }
 
 export function getRoleCookie(): Role | null {

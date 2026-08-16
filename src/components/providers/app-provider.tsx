@@ -21,14 +21,17 @@ import {
   createLivePayment,
   loadLiveState,
   persistChecklistCompletion,
+  recordLiveAuditLog,
   subscribeLiveChanges,
   updateLiveOrderBeforePacking,
   updateLiveOrderItemsQuantities,
   updateLiveOrderStatus,
 } from "@/lib/supabase-data";
 import {
+  appendLiveAuditEvent,
   fileToDataUrl,
   loadState,
+  mergeAuditEvents,
   minutesBetween,
   saveState,
   setRoleCookie,
@@ -36,6 +39,7 @@ import {
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import type {
   AppState,
+  AuditEvent,
   CreateOrderInput,
   CustomerInput,
   DocumentKind,
@@ -106,8 +110,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshLive = useCallback(async () => {
     if (!liveMode) return;
     const live = await loadLiveState();
-    setState(live);
+    setState((previous) => ({
+      ...live,
+      auditEvents: mergeAuditEvents(previous.auditEvents, live.auditEvents),
+    }));
   }, [liveMode]);
+
+  function rememberLiveEvent(event: AuditEvent) {
+    appendLiveAuditEvent(event);
+    setState((previous) => ({
+      ...previous,
+      auditEvents: mergeAuditEvents([event], previous.auditEvents),
+    }));
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +242,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (liveMode) {
         const order = await createLiveOrder(input, currentUser, state.orders);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId: order.id,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_created",
+          detail: `Order ${order.orderNumber} created by ${currentUser.name} for ${order.customerName}`,
+          emoji: "🟢",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId: order.id,
+          userId: currentUser.id,
+          action: "order_created",
+          description: event.detail,
+        });
         await refreshLive();
         return order;
       }
@@ -285,42 +317,75 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function updateOrderBeforePacking(orderId: string, input: CreateOrderInput) {
       if (!currentUser || currentUser.role !== "admin") return;
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "new") return;
+
+      const productCount = input.products.filter((product) => product.productName.trim()).length;
+      const detail = `${currentUser.name} edited ${existing.orderNumber} · ${input.customerName.trim()} · ${productCount} product${productCount === 1 ? "" : "s"}`;
+
       if (liveMode) {
         await updateLiveOrderBeforePacking(orderId, input);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_edited",
+          detail,
+          emoji: "✏️",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId,
+          userId: currentUser.id,
+          action: "order_edited",
+          description: detail,
+        });
         await refreshLive();
         return;
       }
 
       setState((previous) => {
-        const existing = previous.orders.find((order) => order.id === orderId);
-        if (!existing || existing.status !== "new") return previous;
+        const target = previous.orders.find((order) => order.id === orderId);
+        if (!target || target.status !== "new") return previous;
         const products = input.products.map((product) => ({
           id: createId("prod"),
           ...product,
         }));
-        return {
-          ...previous,
-          orders: previous.orders.map((order) =>
-            order.id === orderId
-              ? {
-                  ...order,
-                  invoiceNumber: input.invoiceNumber?.trim() || "",
-                  invoiceDate: input.invoiceDate,
-                  deliveryDate: input.deliveryDate,
-                  customerName: input.customerName.trim(),
-                  contactPerson: input.contactPerson?.trim() || "",
-                  mobile: input.mobile?.trim() || "",
-                  address: input.address?.trim() || "",
-                  gst: input.gst?.trim() || undefined,
-                  priority: input.priority,
-                  notes: input.notes,
-                  products,
-                  packingChecklist: generatePackingChecklist(products),
-                  updatedAt: new Date().toISOString(),
-                }
-              : order,
-          ),
-        };
+        return pushEvent(
+          {
+            ...previous,
+            orders: previous.orders.map((order) =>
+              order.id === orderId
+                ? {
+                    ...order,
+                    invoiceNumber: input.invoiceNumber?.trim() || "",
+                    invoiceDate: input.invoiceDate,
+                    deliveryDate: input.deliveryDate,
+                    customerName: input.customerName.trim(),
+                    contactPerson: input.contactPerson?.trim() || "",
+                    mobile: input.mobile?.trim() || "",
+                    address: input.address?.trim() || "",
+                    gst: input.gst?.trim() || undefined,
+                    priority: input.priority,
+                    notes: input.notes,
+                    products,
+                    packingChecklist: generatePackingChecklist(products),
+                    updatedAt: new Date().toISOString(),
+                  }
+                : order,
+            ),
+          },
+          {
+            orderId,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: "order_edited",
+            detail,
+            emoji: "✏️",
+          },
+        );
       });
     }
 
