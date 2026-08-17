@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Badge, EmptyState, PageHeader, SectionCard, StatCard } from "@/components/ui";
-import { STATUS_LABELS, sortOrdersByDelivery } from "@/lib/demo-data";
+import { STATUS_LABELS, sortOrdersByDelivery, todayDateString } from "@/lib/demo-data";
 import { formatCurrency, formatDateTime, isSameDay } from "@/lib/storage";
 
 export default function DashboardPage() {
@@ -15,6 +15,15 @@ export default function DashboardPage() {
     const paymentsToday = state.payments
       .filter((payment) => isSameDay(payment.createdAt))
       .reduce((sum, payment) => sum + payment.amount, 0);
+
+    const today = todayDateString();
+    const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    const expensesToday = state.expenses
+      .filter((expense) => expense.expenseDate === today)
+      .reduce((sum, expense) => sum + expense.amount, 0);
+    const expensesMonth = state.expenses
+      .filter((expense) => expense.expenseDate.startsWith(month))
+      .reduce((sum, expense) => sum + expense.amount, 0);
 
     const count = (status: string) => state.orders.filter((order) => order.status === status).length;
 
@@ -28,8 +37,10 @@ export default function DashboardPage() {
       partial: count("partial_delivery"),
       returned: count("full_return"),
       paymentsToday,
+      expensesToday,
+      expensesMonth,
     };
-  }, [state.orders, state.payments]);
+  }, [state.expenses, state.orders, state.payments]);
 
   const recentOrders = useMemo(() => sortOrdersByDelivery(state.orders).slice(0, 8), [state.orders]);
 
@@ -62,6 +73,8 @@ export default function DashboardPage() {
         <StatCard label="Partial returns" value={stats.partial} />
         <StatCard label="Full returns" value={stats.returned} />
         <StatCard label="Payments collected today" value={formatCurrency(stats.paymentsToday)} />
+        <StatCard label="Expenses today" value={formatCurrency(stats.expensesToday)} />
+        <StatCard label="Expenses this month" value={formatCurrency(stats.expensesMonth)} />
       </div>
 
       <SectionCard title="Activity feed" description="Latest operational events across the business, including payment collections.">

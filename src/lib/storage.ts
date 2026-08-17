@@ -1,10 +1,24 @@
-import type { AppState, AuditEvent, Payment, Role } from "@/lib/types";
+import type { AppState, AuditEvent, Expense, Payment, Role } from "@/lib/types";
 import { createInitialState } from "@/lib/demo-data";
 
 const STORAGE_KEY = "nt-operations-console-v4";
 const LIVE_AUDIT_KEY = "nt-live-audit-events-v1";
 const LIVE_PAYMENTS_KEY = "nt-live-payments-v1";
+const LIVE_EXPENSES_KEY = "nt-live-expenses-v1";
 const ROLE_COOKIE = "nt_role";
+
+function normalizeState(parsed: AppState): AppState {
+  return {
+    ...createInitialState(),
+    ...parsed,
+    customers: Array.isArray(parsed.customers) ? parsed.customers : [],
+    orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+    payments: Array.isArray(parsed.payments) ? parsed.payments : [],
+    expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
+    auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
+    nextOrderSequence: parsed.nextOrderSequence || 1,
+  };
+}
 
 export function loadState(): AppState {
   if (typeof window === "undefined") return createInitialState();
@@ -12,7 +26,7 @@ export function loadState(): AppState {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return createInitialState();
-    return JSON.parse(raw) as AppState;
+    return normalizeState(JSON.parse(raw) as AppState);
   } catch {
     return createInitialState();
   }
@@ -115,6 +129,64 @@ export function mergePayments(...groups: Payment[][]): Payment[] {
   return [...byId.values()].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
+}
+
+export function loadLiveExpenses(): Expense[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LIVE_EXPENSES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Expense[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLiveExpenses(expenses: Expense[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LIVE_EXPENSES_KEY, JSON.stringify(expenses.slice(0, 400)));
+}
+
+export function appendLiveExpense(expense: Expense) {
+  try {
+    const next = [expense, ...loadLiveExpenses().filter((item) => item.id !== expense.id)];
+    saveLiveExpenses(next);
+    return next;
+  } catch {
+    const slim: Expense = { ...expense, receiptPreviewUrl: undefined };
+    const next = [slim, ...loadLiveExpenses().filter((item) => item.id !== slim.id)];
+    try {
+      saveLiveExpenses(next);
+    } catch {
+      // ignore
+    }
+    return next;
+  }
+}
+
+export function mergeExpenses(...groups: Expense[][]): Expense[] {
+  const byId = new Map<string, Expense>();
+  for (const group of groups) {
+    for (const expense of group) {
+      const existing = byId.get(expense.id);
+      if (!existing) {
+        byId.set(expense.id, expense);
+        continue;
+      }
+      byId.set(expense.id, {
+        ...existing,
+        ...expense,
+        receiptPreviewUrl: expense.receiptPreviewUrl || existing.receiptPreviewUrl,
+        receiptPath: expense.receiptPath || existing.receiptPath,
+      });
+    }
+  }
+  return [...byId.values()].sort((a, b) => {
+    const dateCmp = b.expenseDate.localeCompare(a.expenseDate);
+    if (dateCmp !== 0) return dateCmp;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
 }
 
 export function getRoleCookie(): Role | null {

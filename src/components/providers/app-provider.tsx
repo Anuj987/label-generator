@@ -17,8 +17,10 @@ import {
 } from "@/lib/supabase-auth";
 import {
   createLiveCustomer,
+  createLiveExpense,
   createLiveOrder,
   createLivePayment,
+  loadLiveExpensesFromDb,
   loadLiveState,
   persistChecklistCompletion,
   recordLiveAuditLog,
@@ -30,15 +32,19 @@ import {
 } from "@/lib/supabase-data";
 import {
   appendLiveAuditEvent,
+  appendLiveExpense,
   appendLivePayment,
   fileToDataUrl,
   loadLiveAuditEvents,
+  loadLiveExpenses,
   loadLivePayments,
   loadState,
   mergeAuditEvents,
+  mergeExpenses,
   mergePayments,
   minutesBetween,
   saveLiveAuditEvents,
+  saveLiveExpenses,
   saveLivePayments,
   saveState,
   setRoleCookie,
@@ -51,6 +57,7 @@ import type {
   CreateOrderInput,
   CustomerInput,
   DocumentKind,
+  ExpenseInput,
   Order,
   PartialDeliveryLine,
   PaymentInput,
@@ -82,6 +89,7 @@ type AppContextValue = {
   ) => Promise<void>;
   completeFullReturn: (orderId: string, reason: string, files: File[]) => Promise<void>;
   recordPayment: (input: PaymentInput) => Promise<void>;
+  createExpense: (input: ExpenseInput) => Promise<void>;
   addOrderDocuments: (orderId: string, files: File[], kind: DocumentKind) => Promise<void>;
   searchAll: (query: string) => {
     customers: AppState["customers"];
@@ -117,11 +125,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshLive = useCallback(async () => {
     if (!liveMode) return;
-    const [live, sync] = await Promise.all([loadLiveState(), fetchOpsSync()]);
+    const [live, sync, remoteExpenses] = await Promise.all([
+      loadLiveState(),
+      fetchOpsSync(),
+      loadLiveExpensesFromDb(),
+    ]);
     // Keep local caches aligned with shared sync so phones see the same payments/activity.
     if (sync.sync) {
       saveLivePayments(mergePayments(sync.payments, loadLivePayments()));
       saveLiveAuditEvents(mergeAuditEvents(sync.events, loadLiveAuditEvents()));
+    }
+    const expenses = mergeExpenses(remoteExpenses, loadLiveExpenses());
+    // Prefer remote when the DB table is live; still keep local drafts until migration runs.
+    if (remoteExpenses.length) {
+      saveLiveExpenses(mergeExpenses(remoteExpenses, loadLiveExpenses()));
     }
     setState((previous) => ({
       ...live,
@@ -132,6 +149,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         loadLiveAuditEvents(),
       ),
       payments: mergePayments(previous.payments, live.payments, sync.payments, loadLivePayments()),
+      expenses: mergeExpenses(previous.expenses, expenses),
     }));
   }, [liveMode]);
 
@@ -156,7 +174,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (liveMode) {
           const profile = await getSessionStaffProfile();
           if (!cancelled) setCurrentUser(profile);
-          const [live, sync] = await Promise.all([loadLiveState(), fetchOpsSync()]);
+          const [live, sync, remoteExpenses] = await Promise.all([
+            loadLiveState(),
+            fetchOpsSync(),
+            loadLiveExpensesFromDb(),
+          ]);
           if (sync.sync) {
             const localPayments = loadLivePayments();
             const localEvents = loadLiveAuditEvents();
@@ -167,10 +189,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
             saveLivePayments(mergePayments(sync.payments, localPayments));
             saveLiveAuditEvents(mergeAuditEvents(sync.events, localEvents));
           }
+          const expenses = mergeExpenses(remoteExpenses, loadLiveExpenses());
+          if (remoteExpenses.length) {
+            saveLiveExpenses(expenses);
+          }
           if (!cancelled) {
             setState({
               ...live,
               payments: mergePayments(live.payments, sync.payments, loadLivePayments()),
+              expenses,
               auditEvents: mergeAuditEvents(live.auditEvents, sync.events, loadLiveAuditEvents()),
             });
           }
@@ -874,6 +901,71 @@ export function AppProvider({ children }: { children: ReactNode }) {
       );
     }
 
+    async function createExpense(input: ExpenseInput) {
+      if (!currentUser) return;
+      if (!input.amount || input.amount <= 0) {
+        throw new Error("Amount is required");
+      }
+      if (!input.expenseDate) {
+        throw new Error("Date is required");
+      }
+      if (!input.category) {
+        throw new Error("Category is required");
+      }
+
+      if (liveMode) {
+        try {
+          const expense = await createLiveExpense(input, currentUser);
+          try {
+            appendLiveExpense(expense);
+          } catch {
+            // ignore quota
+          }
+          setState((previous) => ({
+            ...previous,
+            expenses: mergeExpenses([expense], previous.expenses),
+          }));
+          try {
+            await refreshLive();
+          } catch {
+            // ignore refresh failures
+          }
+          return;
+        } catch (error) {
+          // Until the expenses migration is applied, keep a local draft so the UI works.
+          const message = error instanceof Error ? error.message : String(error);
+          const tableMissing =
+            /could not find the table|schema cache|relation .*expenses/i.test(message) ||
+            /expense-receipts/i.test(message);
+          if (!tableMissing) throw error;
+        }
+      }
+
+      const expense = {
+        id: createId("exp"),
+        amount: input.amount,
+        expenseDate: input.expenseDate,
+        category: input.category,
+        description: input.description?.trim() || undefined,
+        submittedBy: currentUser.id,
+        submittedByName: currentUser.name,
+        receiptFileName: input.receipt?.name,
+        receiptPreviewUrl: input.receipt?.dataUrl,
+        createdAt: new Date().toISOString(),
+      };
+      if (liveMode) {
+        try {
+          appendLiveExpense(expense);
+        } catch {
+          // ignore
+        }
+      }
+      setState((previous) => ({
+        ...previous,
+        expenses: mergeExpenses([expense], previous.expenses),
+      }));
+    }
+
     async function addOrderDocuments(orderId: string, files: File[], kind: DocumentKind) {
       if (!currentUser) return;
       const docs = await filesToDocuments(files, kind, { orderId });
@@ -939,6 +1031,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       completePartialDelivery,
       completeFullReturn,
       recordPayment,
+      createExpense,
       addOrderDocuments,
       searchAll,
     };

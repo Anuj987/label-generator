@@ -7,6 +7,9 @@ import type {
   CreateOrderInput,
   Customer,
   CustomerInput,
+  Expense,
+  ExpenseCategory,
+  ExpenseInput,
   Order,
   OrderProduct,
   OrderStatus,
@@ -428,6 +431,7 @@ export async function loadLiveState(): Promise<AppState> {
     customers,
     orders,
     payments: mergePayments(loadLivePayments(), payments),
+    expenses: [],
     auditEvents: mergeAuditEvents(loadLiveAuditEvents(), remoteAudit),
     nextOrderSequence: orders.length + 1,
   };
@@ -783,6 +787,148 @@ export function userForRole(role: Role): UserProfile {
   return SUPABASE_USERS.find((user) => user.role === role) ?? SUPABASE_USERS[0];
 }
 
+const EXPENSE_CATEGORIES: ExpenseCategory[] = [
+  "Fuel",
+  "Transport",
+  "Food",
+  "Packing Material",
+  "Loading/Unloading",
+  "Other",
+];
+
+function isExpenseCategory(value: string): value is ExpenseCategory {
+  return (EXPENSE_CATEGORIES as string[]).includes(value);
+}
+
+function mapExpense(row: Record<string, unknown>, usersById: Map<string, string>): Expense {
+  const submittedBy = String(row.submitted_by ?? "");
+  const categoryRaw = String(row.category ?? "Other");
+  return {
+    id: String(row.id),
+    amount: Number(row.amount ?? 0),
+    expenseDate: String(row.expense_date ?? "").slice(0, 10),
+    category: isExpenseCategory(categoryRaw) ? categoryRaw : "Other",
+    description: row.description ? String(row.description) : undefined,
+    submittedBy,
+    submittedByName: usersById.get(submittedBy) ?? "Staff",
+    receiptPath: row.receipt_path ? String(row.receipt_path) : undefined,
+    receiptFileName: row.receipt_file_name ? String(row.receipt_file_name) : undefined,
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const response = await fetch(dataUrl);
+  return response.blob();
+}
+
+/** Load expenses visible to the current Auth session (RLS enforced). */
+export async function loadLiveExpensesFromDb(): Promise<Expense[]> {
+  if (!supabaseConfigured || !supabase) return [];
+
+  const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
+  const result = await supabase
+    .from("expenses")
+    .select("*")
+    .order("expense_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (result.error) {
+    // Table may not exist until the manual migration is applied.
+    console.warn("Expenses load skipped:", result.error.message);
+    return [];
+  }
+
+  const expenses = (result.data ?? []).map((row) => mapExpense(row as Record<string, unknown>, usersById));
+
+  // Resolve private receipt previews via short-lived signed URLs (never public).
+  await Promise.all(
+    expenses.map(async (expense) => {
+      if (!expense.receiptPath || !supabase) return;
+      const signed = await supabase.storage
+        .from("expense-receipts")
+        .createSignedUrl(expense.receiptPath, 60 * 60);
+      if (!signed.error && signed.data?.signedUrl) {
+        expense.receiptPreviewUrl = signed.data.signedUrl;
+      }
+    }),
+  );
+
+  return expenses;
+}
+
+export async function createLiveExpense(input: ExpenseInput, actor: UserProfile): Promise<Expense> {
+  if (!supabaseConfigured || !supabase) {
+    throw new Error("Supabase is not configured");
+  }
+
+  const insert = await supabase
+    .from("expenses")
+    .insert({
+      amount: input.amount,
+      expense_date: input.expenseDate,
+      category: input.category,
+      description: input.description?.trim() || null,
+      submitted_by: actor.id,
+    })
+    .select("*")
+    .maybeSingle();
+
+  if (insert.error || !insert.data) {
+    const message =
+      insert.error && typeof insert.error === "object" && "message" in insert.error
+        ? String((insert.error as { message?: string }).message || "Expense create failed")
+        : "Expense create failed";
+    throw new Error(message);
+  }
+
+  const row = insert.data as Record<string, unknown>;
+  const expenseId = String(row.id);
+  let receiptPath: string | undefined;
+  let receiptFileName: string | undefined;
+  let receiptPreviewUrl: string | undefined = input.receipt?.dataUrl;
+
+  if (input.receipt?.dataUrl) {
+    const safeName = (input.receipt.name || "receipt.jpg").replace(/[^\w.\-]+/g, "_");
+    const path = `${actor.id}/${expenseId}/${safeName}`;
+    try {
+      const blob = await dataUrlToBlob(input.receipt.dataUrl);
+      const uploaded = await supabase.storage.from("expense-receipts").upload(path, blob, {
+        contentType: blob.type || "image/jpeg",
+        upsert: false,
+      });
+      if (!uploaded.error) {
+        receiptPath = path;
+        receiptFileName = safeName;
+        const updated = await supabase
+          .from("expenses")
+          .update({ receipt_path: path, receipt_file_name: safeName })
+          .eq("id", expenseId)
+          .eq("submitted_by", actor.id);
+        if (updated.error) {
+          console.warn("Expense receipt path update skipped:", updated.error.message);
+        }
+        const signed = await supabase.storage.from("expense-receipts").createSignedUrl(path, 60 * 60);
+        if (!signed.error && signed.data?.signedUrl) {
+          receiptPreviewUrl = signed.data.signedUrl;
+        }
+      } else {
+        console.warn("Expense receipt upload skipped:", uploaded.error.message);
+      }
+    } catch (error) {
+      console.warn("Expense receipt upload failed:", error);
+    }
+  }
+
+  return {
+    ...mapExpense(row, new Map(SUPABASE_USERS.map((user) => [user.id, user.name]))),
+    receiptPath,
+    receiptFileName,
+    receiptPreviewUrl,
+  };
+}
+
 export function subscribeLiveChanges(onChange: () => void) {
   if (!supabaseConfigured || !supabase) return () => undefined;
 
@@ -793,6 +939,7 @@ export function subscribeLiveChanges(onChange: () => void) {
     .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "audit_logs" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "packing_events" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "delivery_events" }, onChange)

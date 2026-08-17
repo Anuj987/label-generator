@@ -13,6 +13,7 @@ import {
   Wallet,
   ClipboardList,
   Download,
+  Receipt,
   X,
 } from "lucide-react";
 import { useAppContext } from "@/components/providers/app-provider";
@@ -26,16 +27,19 @@ const NAV: Record<Role, Array<{ href: string; label: string; icon: typeof Users 
     { href: "/customers", label: "Customers", icon: Users },
     { href: "/orders", label: "Orders", icon: ClipboardList },
     { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/expenses", label: "Expenses", icon: Receipt },
     { href: "/export", label: "Export", icon: Download },
     { href: "/search", label: "Search", icon: Search },
   ],
   packing: [
     { href: "/packing", label: "Packing", icon: Package },
+    { href: "/expenses", label: "Expenses", icon: Receipt },
     { href: "/search", label: "Search", icon: Search },
   ],
   delivery: [
     { href: "/delivery", label: "Delivery", icon: Truck },
     { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/expenses", label: "Expenses", icon: Receipt },
     { href: "/search", label: "Search", icon: Search },
   ],
 };
