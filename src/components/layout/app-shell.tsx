@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useAppContext } from "@/components/providers/app-provider";
+import { EnableNotificationsControl } from "@/components/enable-notifications-control";
 import { Button, Input } from "@/components/ui";
 import { ROLE_LABELS } from "@/lib/demo-data";
 import type { Role } from "@/lib/types";
@@ -118,6 +119,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <p className="text-sm font-medium text-slate-800">Operations Console</p>
           </div>
           <div className="flex items-center gap-2">
+            <EnableNotificationsControl />
             <div className="hidden text-right sm:block">
               <p className="text-sm font-semibold text-slate-900">{currentUser.name}</p>
               <p className="text-xs text-slate-500">{ROLE_LABELS[currentUser.role]}</p>

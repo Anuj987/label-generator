@@ -4,6 +4,7 @@ import { ReactNode, useEffect } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import {
   initOneSignal,
+  isIosSafariLike,
   loginOneSignalExternalId,
   logoutOneSignal,
 } from "@/lib/onesignal-client";
@@ -24,7 +25,10 @@ export function OneSignalBridge({ children }: { children: ReactNode }) {
     if (!ready || !liveMode) return;
 
     if (currentUser?.id) {
-      void loginOneSignalExternalId(currentUser.id);
+      // Auto-prompt on desktop/Android; iOS needs a user tap + home-screen app.
+      void loginOneSignalExternalId(currentUser.id, {
+        requestPermission: !isIosSafariLike(),
+      });
       return;
     }
 
