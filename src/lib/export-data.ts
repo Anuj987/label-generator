@@ -1,5 +1,5 @@
 import { PRIORITY_LABELS, STATUS_LABELS, totalPurchaseCost, totalQuantity } from "@/lib/demo-data";
-import type { Order, Payment } from "@/lib/types";
+import type { Expense, Order, Payment } from "@/lib/types";
 
 function escapeCsv(value: string | number | undefined | null) {
   const text = value === undefined || value === null ? "" : String(value);
@@ -146,6 +146,18 @@ export function buildPaymentsCsv(payments: Payment[], orders: Order[]) {
     payment.notes ?? "",
   ]);
 
+  return toCsv(headers, rows);
+}
+
+export function buildExpensesCsv(expenses: Expense[]) {
+  const headers = ["Date", "Person", "Category", "Amount", "Description"];
+  const rows = expenses.map((expense) => [
+    expense.expenseDate,
+    expense.submittedByName,
+    expense.category,
+    expense.amount,
+    expense.description ?? "",
+  ]);
   return toCsv(headers, rows);
 }
 
