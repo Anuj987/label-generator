@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AppProvider } from "@/components/providers/app-provider";
+import { OneSignalBridge } from "@/components/providers/onesignal-bridge";
 import { AppShell } from "@/components/layout/app-shell";
 import "./globals.css";
 
@@ -13,7 +14,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body>
         <AppProvider>
-          <AppShell>{children}</AppShell>
+          <OneSignalBridge>
+            <AppShell>{children}</AppShell>
+          </OneSignalBridge>
         </AppProvider>
       </body>
     </html>

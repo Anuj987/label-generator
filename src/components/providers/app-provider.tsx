@@ -50,6 +50,7 @@ import {
   setRoleCookie,
 } from "@/lib/storage";
 import { fetchOpsSync, publishOpsSync } from "@/lib/ops-sync";
+import { requestNewOrderNotification } from "@/lib/notify-new-order";
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import type {
   AppState,
@@ -321,6 +322,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           userId: currentUser.id,
           action: "order_created",
           description: event.detail,
+        });
+        // Push only after a successful brand-new order INSERT (never on edits/status).
+        void requestNewOrderNotification({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
         });
         await refreshLive();
         return order;
