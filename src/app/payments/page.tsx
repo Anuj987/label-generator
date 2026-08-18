@@ -7,22 +7,27 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  PhotoThumbGrid,
   SectionCard,
   Select,
   TextArea,
 } from "@/components/ui";
-import { fileToDataUrl, formatCurrency, formatDateTime } from "@/lib/storage";
+import { errorMessage, fileToCompressedDataUrl, formatCurrency, formatDateTime } from "@/lib/storage";
 import type { DocumentKind, PaymentMode } from "@/lib/types";
 
 export default function PaymentsPage() {
   const { currentUser, recordPayment, state } = useAppContext();
   const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     customerName: "",
     invoiceNumber: "",
     invoiceDate: new Date().toISOString().slice(0, 10),
+    paymentDate: new Date().toISOString().slice(0, 10),
     amount: "",
     mode: "cash" as PaymentMode,
+    chequeNumber: "",
     orderId: "",
     notes: "",
   });
@@ -53,6 +58,13 @@ export default function PaymentsPage() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!form.customerName.trim() || !form.amount) return;
+    if (form.mode === "cheque" && !form.chequeNumber.trim()) {
+      setError("Cheque number is required for cheque payments.");
+      return;
+    }
+
+    setError(null);
+    setSaving(true);
 
     const kindByMode: Record<PaymentMode, DocumentKind> = {
       cash: "receipt",
@@ -61,38 +73,48 @@ export default function PaymentsPage() {
       cheque: "cheque_photo",
     };
 
-    const uploaded = [];
-    if (files) {
-      for (const file of Array.from(files)) {
-        uploaded.push({
-          name: file.name,
-          kind: kindByMode[form.mode],
-          dataUrl: await fileToDataUrl(file),
-        });
+    try {
+      const uploaded = [];
+      if (files) {
+        for (const file of Array.from(files)) {
+          uploaded.push({
+            name: file.name.replace(/\.\w+$/, "") + ".jpg",
+            kind: kindByMode[form.mode],
+            dataUrl: await fileToCompressedDataUrl(file),
+          });
+        }
       }
+
+      await recordPayment({
+        customerName: form.customerName,
+        invoiceNumber: form.invoiceNumber,
+        invoiceDate: form.invoiceDate,
+        paymentDate: form.paymentDate,
+        amount: Number(form.amount),
+        mode: form.mode,
+        chequeNumber: form.chequeNumber || undefined,
+        orderId: form.orderId || undefined,
+        notes: form.notes || undefined,
+        files: uploaded,
+      });
+
+      setForm({
+        customerName: "",
+        invoiceNumber: "",
+        invoiceDate: new Date().toISOString().slice(0, 10),
+        paymentDate: new Date().toISOString().slice(0, 10),
+        amount: "",
+        mode: "cash",
+        chequeNumber: "",
+        orderId: "",
+        notes: "",
+      });
+      setFiles(null);
+    } catch (err) {
+      setError(errorMessage(err, "Failed to save payment"));
+    } finally {
+      setSaving(false);
     }
-
-    await recordPayment({
-      customerName: form.customerName,
-      invoiceNumber: form.invoiceNumber,
-      invoiceDate: form.invoiceDate,
-      amount: Number(form.amount),
-      mode: form.mode,
-      orderId: form.orderId || undefined,
-      notes: form.notes || undefined,
-      files: uploaded,
-    });
-
-    setForm({
-      customerName: "",
-      invoiceNumber: "",
-      invoiceDate: new Date().toISOString().slice(0, 10),
-      amount: "",
-      mode: "cash",
-      orderId: "",
-      notes: "",
-    });
-    setFiles(null);
   }
 
   return (
@@ -100,7 +122,7 @@ export default function PaymentsPage() {
       <PageHeader
         eyebrow="Payments"
         title="Payment collection"
-        description="Type the customer name each time. No customer list is saved."
+        description="Type a customer name or pick from suggestions. Invoice number is optional."
       />
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -123,8 +145,7 @@ export default function PaymentsPage() {
             </datalist>
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
-                label="Invoice number"
-                required
+                label="Invoice number (optional)"
                 value={form.invoiceNumber}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, invoiceNumber: event.target.value }))
@@ -137,6 +158,15 @@ export default function PaymentsPage() {
                 value={form.invoiceDate}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, invoiceDate: event.target.value }))
+                }
+              />
+              <Input
+                label="Payment date"
+                type="date"
+                required
+                value={form.paymentDate}
+                onChange={(event) =>
+                  setForm((previous) => ({ ...previous, paymentDate: event.target.value }))
                 }
               />
               <Input
@@ -159,6 +189,16 @@ export default function PaymentsPage() {
                 <option value="bank_transfer">Bank Transfer</option>
                 <option value="cheque">Cheque</option>
               </Select>
+              {form.mode === "cheque" ? (
+                <Input
+                  label="Cheque number"
+                  required
+                  value={form.chequeNumber}
+                  onChange={(event) =>
+                    setForm((previous) => ({ ...previous, chequeNumber: event.target.value }))
+                  }
+                />
+              ) : null}
             </div>
             <Select
               label="Link order (optional)"
@@ -173,21 +213,28 @@ export default function PaymentsPage() {
               ))}
             </Select>
             <Input
-              label="Upload cheque / UPI / receipt"
+              label="Upload cheque / UPI / receipt photo"
               type="file"
+              accept="image/*"
               multiple
               onChange={(event) => setFiles(event.target.files)}
             />
+            <p className="text-xs text-slate-500">Photos are compressed automatically for mobile save.</p>
             <TextArea
               label="Notes"
               value={form.notes}
               onChange={(event) => setForm((previous) => ({ ...previous, notes: event.target.value }))}
             />
-            <Button type="submit">Save payment</Button>
+            {error ? (
+              <p className="rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+            ) : null}
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save payment"}
+            </Button>
           </form>
         </SectionCard>
 
-        <SectionCard title="Payment list" description="Search by typed customer name or invoice number.">
+        <SectionCard title="Payment list" description="Shared across phones. Search by customer or invoice.">
           <Input
             label="Search"
             value={query}
@@ -201,7 +248,7 @@ export default function PaymentsPage() {
                   <div>
                     <p className="font-semibold text-slate-950">{formatCurrency(payment.amount)}</p>
                     <p className="text-sm text-slate-600">
-                      {payment.customerName} · {payment.invoiceNumber}
+                      {payment.customerName} · {payment.invoiceNumber || "No invoice"}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {payment.mode.replace("_", " ")} · {payment.collectedBy} ·{" "}
@@ -210,26 +257,45 @@ export default function PaymentsPage() {
                   </div>
                 </div>
                 {payment.documents.length ? (
-                  <div className="mt-3 space-y-1">
-                    {payment.documents.map((doc) => (
-                      <a
-                        key={doc.id}
-                        href={doc.dataUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block text-sm text-teal-700 hover:underline"
-                      >
-                        {doc.name}
-                      </a>
-                    ))}
+                  <div className="mt-3">
+                    <PhotoThumbGrid
+                      items={payment.documents.map((doc) => ({
+                        id: doc.id,
+                        src: doc.dataUrl,
+                        title: doc.name,
+                      }))}
+                    />
                   </div>
-                ) : null}
+                ) : (
+                  <p className="mt-3 text-xs text-slate-400">No proof photo attached</p>
+                )}
               </div>
             ))}
             {!filtered.length ? <EmptyState title="No payments yet" /> : null}
           </div>
         </SectionCard>
       </div>
+
+      <SectionCard title="Payment activity" description="Recent payment collections (all devices).">
+        <div className="space-y-3">
+          {state.auditEvents
+            .filter((event) => event.action === "payment_collected")
+            .slice(0, 12)
+            .map((event) => (
+              <div key={event.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm font-medium text-slate-900">
+                  {event.emoji} {event.detail}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {event.actorName} · {formatDateTime(event.createdAt)}
+                </p>
+              </div>
+            ))}
+          {!state.auditEvents.some((event) => event.action === "payment_collected") ? (
+            <EmptyState title="No payment activity yet" description="Saved payments will appear here on all phones." />
+          ) : null}
+        </div>
+      </SectionCard>
     </div>
   );
 }

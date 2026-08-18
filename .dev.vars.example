@@ -2,3 +2,9 @@ NEXTJS_ENV=development
 # Copy to .dev.vars and fill for local Workers preview:
 # NEXT_PUBLIC_SUPABASE_URL=https://bwpmuknevcoshtufaytk.supabase.co
 # NEXT_PUBLIC_SUPABASE_ANON_KEY=
+# NEXT_PUBLIC_ONESIGNAL_APP_ID=47bfa90f-67bb-4210-a7ad-41ffcddee9a6
+# NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
+#
+# Server-only secrets (never NEXT_PUBLIC_*):
+# ONESIGNAL_REST_API_KEY=
+# SUPABASE_SERVICE_ROLE_KEY=

@@ -107,7 +107,17 @@ export function createInitialState(): AppState {
     })),
     orders: [],
     payments: [],
+    expenses: [],
     auditEvents: [],
     nextOrderSequence: 1,
   };
 }
+
+export const EXPENSE_CATEGORIES = [
+  "Fuel",
+  "Transport",
+  "Food",
+  "Packing Material",
+  "Loading/Unloading",
+  "Other",
+] as const;
