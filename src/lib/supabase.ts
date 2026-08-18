@@ -9,8 +9,10 @@ export const supabaseConfigured = Boolean(url && anonKey);
 export const supabase = supabaseConfigured
   ? createClient(url, anonKey!, {
       auth: {
-        persistSession: false,
-        autoRefreshToken: false,
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: typeof window !== "undefined" ? window.localStorage : undefined,
       },
     })
   : null;

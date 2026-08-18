@@ -12,11 +12,18 @@ import {
   SectionCard,
   TextArea,
 } from "@/components/ui";
-import { PRIORITY_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
+import { PRIORITY_LABELS, STATUS_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
 import { formatDate } from "@/lib/storage";
-import type { PartialDeliveryLine } from "@/lib/types";
+import type { OrderStatus, PartialDeliveryLine } from "@/lib/types";
 
 type OutcomeMode = "delivered" | "partial" | "return" | null;
+
+const DELIVERY_VISIBLE_STATUSES: OrderStatus[] = [
+  "new",
+  "packing",
+  "ready",
+  "out_for_delivery",
+];
 
 export default function DeliveryPage() {
   const {
@@ -31,9 +38,7 @@ export default function DeliveryPage() {
   const queue = useMemo(
     () =>
       sortOrdersByDelivery(
-        state.orders.filter(
-          (order) => order.status === "ready" || order.status === "out_for_delivery",
-        ),
+        state.orders.filter((order) => DELIVERY_VISIBLE_STATUSES.includes(order.status)),
       ),
     [state.orders],
   );
@@ -97,7 +102,7 @@ export default function DeliveryPage() {
       <PageHeader
         eyebrow="Delivery · Mayur"
         title="Delivery queue"
-        description="Start ready orders, then record delivered, partial, or full return outcomes."
+        description="View upcoming orders. Start delivery only when an order is Ready for Delivery."
       />
 
       <div className="space-y-4">
@@ -116,7 +121,7 @@ export default function DeliveryPage() {
                 <p>
                   Products: {order.products.length} · Total qty: {totalQuantity(order.products)}
                 </p>
-                <p>Status: {order.status === "ready" ? "Ready" : "Out for Delivery"}</p>
+                <p>Status: {STATUS_LABELS[order.status]}</p>
               </div>
 
               {order.status === "ready" ? (
@@ -126,7 +131,7 @@ export default function DeliveryPage() {
                     <Button variant="secondary">View order</Button>
                   </Link>
                 </div>
-              ) : (
+              ) : order.status === "out_for_delivery" ? (
                 <div className="space-y-3">
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={() => openOutcome(order.id, "delivered")}>Delivered</Button>
@@ -146,11 +151,15 @@ export default function DeliveryPage() {
                       {mode === "delivered" ? (
                         <>
                           <Input
-                            label="Upload signed bill / photos"
+                            label="Upload delivery receipt photo"
                             type="file"
+                            accept="image/*"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />
+                          <p className="text-xs text-slate-500">
+                            Take or choose a clear photo of the signed delivery receipt / bill.
+                          </p>
                           <TextArea
                             label="Notes"
                             value={notes}
@@ -212,8 +221,9 @@ export default function DeliveryPage() {
                             </div>
                           ))}
                           <Input
-                            label="Upload photos / signed bill"
+                            label="Upload delivery receipt / return photos"
                             type="file"
+                            accept="image/*"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />
@@ -234,8 +244,9 @@ export default function DeliveryPage() {
                             onChange={(event) => setReason(event.target.value)}
                           />
                           <Input
-                            label="Upload photos"
+                            label="Upload return receipt photos"
                             type="file"
+                            accept="image/*"
                             multiple
                             onChange={(event) => setFiles(event.target.files)}
                           />
@@ -262,6 +273,15 @@ export default function DeliveryPage() {
                     </div>
                   ) : null}
                 </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Link href={`/orders/${order.id}`}>
+                    <Button variant="secondary">View order</Button>
+                  </Link>
+                  <p className="w-full text-xs text-slate-500">
+                    Start delivery becomes available when this order is Ready for Delivery.
+                  </p>
+                </div>
               )}
             </SectionCard>
           );
@@ -270,7 +290,7 @@ export default function DeliveryPage() {
         {!queue.length ? (
           <EmptyState
             title="No delivery work right now"
-            description="Ready and out-for-delivery orders appear here."
+            description="New, packing, ready, and out-for-delivery orders appear here."
           />
         ) : null}
       </div>

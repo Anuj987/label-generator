@@ -2,6 +2,7 @@
 
 import { FormEvent, use, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAppContext } from "@/components/providers/app-provider";
 import {
   Badge,
@@ -9,17 +10,35 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  PhotoThumbGrid,
   SectionCard,
   Select,
   TextArea,
 } from "@/components/ui";
 import { PRIORITY_LABELS, STATUS_LABELS, totalPurchaseCost } from "@/lib/demo-data";
-import { formatDate, formatDateTime } from "@/lib/storage";
+import { errorMessage, formatDate, formatDateTime } from "@/lib/storage";
 import type { Priority } from "@/lib/types";
+
+type ProductDraft = {
+  productName: string;
+  quantity: string;
+  unit: string;
+  description: string;
+  purchasePrice: string;
+};
+
+const emptyProduct = (): ProductDraft => ({
+  productName: "",
+  quantity: "1",
+  unit: "kg",
+  description: "",
+  purchasePrice: "",
+});
 
 export default function OrderDetailPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params);
-  const { currentUser, state, updateOrderBeforePacking } = useAppContext();
+  const { currentUser, state, updateOrderBeforePacking, deleteOrder } = useAppContext();
+  const router = useRouter();
 
   const order = state.orders.find((item) => item.id === orderId);
   const events = useMemo(
@@ -28,6 +47,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
   );
 
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [form, setForm] = useState({
     customerName: order?.customerName ?? "",
     contactPerson: order?.contactPerson ?? "",
@@ -40,7 +62,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
     priority: (order?.priority ?? "normal") as Priority,
     notes: order?.notes ?? "",
   });
-  const [products, setProducts] = useState(
+  const [products, setProducts] = useState<ProductDraft[]>(
     order?.products.map((product) => ({
       productName: product.productName,
       quantity: String(product.quantity),
@@ -50,7 +72,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         product.purchasePrice !== undefined && product.purchasePrice !== null
           ? String(product.purchasePrice)
           : "",
-    })) ?? [],
+    })) ?? [emptyProduct()],
   );
 
   if (!currentUser) return null;
@@ -65,23 +87,77 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
   }
 
   const canEdit = currentUser.role === "admin" && order.status === "new";
+  const canDelete = currentUser.role === "admin";
+
+  async function handleDelete() {
+    if (!order || !canDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteOrder(order.id);
+      router.push("/orders");
+    } catch (err) {
+      setDeleteError(errorMessage(err, "Failed to delete order"));
+      setDeleting(false);
+    }
+  }
+
+  function startEditing() {
+    if (!order) return;
+    setForm({
+      customerName: order.customerName,
+      contactPerson: order.contactPerson,
+      mobile: order.mobile,
+      address: order.address,
+      gst: order.gst ?? "",
+      invoiceNumber: order.invoiceNumber,
+      invoiceDate: order.invoiceDate,
+      deliveryDate: order.deliveryDate,
+      priority: order.priority,
+      notes: order.notes ?? "",
+    });
+    setProducts(
+      order.products.length
+        ? order.products.map((product) => ({
+            productName: product.productName,
+            quantity: String(product.quantity),
+            unit: product.unit,
+            description: product.description ?? "",
+            purchasePrice:
+              product.purchasePrice !== undefined && product.purchasePrice !== null
+                ? String(product.purchasePrice)
+                : "",
+          }))
+        : [emptyProduct()],
+    );
+    setEditing(true);
+  }
 
   async function saveEdit(event: FormEvent) {
     event.preventDefault();
     if (!order) return;
-    await updateOrderBeforePacking(order.id, {
-      ...form,
-      gst: form.gst || undefined,
-      notes: form.notes || undefined,
-      products: products.map((product) => ({
-        productName: product.productName,
+    const nextProducts = products
+      .filter((product) => product.productName.trim())
+      .map((product) => ({
+        productName: product.productName.trim(),
         quantity: Number(product.quantity) || 1,
-        unit: product.unit,
+        unit: product.unit.trim() || "kg",
         description: product.description.trim() || undefined,
         purchasePrice: product.purchasePrice.trim()
           ? Number(product.purchasePrice)
           : undefined,
-      })),
+      }));
+    if (!nextProducts.length) return;
+
+    await updateOrderBeforePacking(order.id, {
+      ...form,
+      contactPerson: form.contactPerson.trim() || undefined,
+      mobile: form.mobile.trim() || undefined,
+      address: form.address.trim() || undefined,
+      invoiceNumber: form.invoiceNumber.trim() || undefined,
+      gst: form.gst || undefined,
+      notes: form.notes || undefined,
+      products: nextProducts,
     });
     setEditing(false);
   }
@@ -107,7 +183,13 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
           title="Order details"
           actions={
             canEdit ? (
-              <Button variant="secondary" onClick={() => setEditing((value) => !value)}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (editing) setEditing(false);
+                  else startEditing();
+                }}
+              >
                 {editing ? "Cancel" : "Edit"}
               </Button>
             ) : null
@@ -117,34 +199,35 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
             <form className="grid gap-3" onSubmit={saveEdit}>
               <Input
                 label="Customer name"
+                required
                 value={form.customerName}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, customerName: event.target.value }))
                 }
               />
               <Input
-                label="Contact person"
+                label="Contact person (optional)"
                 value={form.contactPerson}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, contactPerson: event.target.value }))
                 }
               />
               <Input
-                label="Mobile"
+                label="Mobile (optional)"
                 value={form.mobile}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, mobile: event.target.value }))
                 }
               />
               <TextArea
-                label="Address"
+                label="Address (optional)"
                 value={form.address}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, address: event.target.value }))
                 }
               />
               <Input
-                label="Invoice number"
+                label="Invoice number (optional)"
                 value={form.invoiceNumber}
                 onChange={(event) =>
                   setForm((previous) => ({ ...previous, invoiceNumber: event.target.value }))
@@ -186,77 +269,111 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                 value={form.notes}
                 onChange={(event) => setForm((previous) => ({ ...previous, notes: event.target.value }))}
               />
-              {products.map((product, index) => (
-                <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 p-3">
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <Input
-                      label="Product"
-                      value={product.productName}
-                      onChange={(event) =>
-                        setProducts((previous) =>
-                          previous.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, productName: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    />
-                    <Input
-                      label="Qty"
-                      value={product.quantity}
-                      onChange={(event) =>
-                        setProducts((previous) =>
-                          previous.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, quantity: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    />
-                    <Input
-                      label="Unit"
-                      value={product.unit}
-                      onChange={(event) =>
-                        setProducts((previous) =>
-                          previous.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, unit: event.target.value } : item,
-                          ),
-                        )
-                      }
-                    />
+
+              <div className="space-y-3 rounded-3xl border border-teal-200 bg-teal-50/40 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Products</p>
+                    <p className="text-xs text-slate-500">Add, edit, or remove lines before packing.</p>
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input
-                      label="Purchase price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={product.purchasePrice}
-                      onChange={(event) =>
-                        setProducts((previous) =>
-                          previous.map((item, itemIndex) =>
-                            itemIndex === index
-                              ? { ...item, purchasePrice: event.target.value }
-                              : item,
-                          ),
-                        )
-                      }
-                    />
-                    <TextArea
-                      label="Product description"
-                      rows={2}
-                      value={product.description}
-                      onChange={(event) =>
-                        setProducts((previous) =>
-                          previous.map((item, itemIndex) =>
-                            itemIndex === index
-                              ? { ...item, description: event.target.value }
-                              : item,
-                          ),
-                        )
-                      }
-                    />
-                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setProducts((previous) => [...previous, emptyProduct()])}
+                  >
+                    Add product
+                  </Button>
                 </div>
-              ))}
+
+                {products.map((product, index) => (
+                  <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 bg-white p-3">
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <Input
+                        label="Product"
+                        required
+                        value={product.productName}
+                        onChange={(event) =>
+                          setProducts((previous) =>
+                            previous.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, productName: event.target.value } : item,
+                            ),
+                          )
+                        }
+                      />
+                      <Input
+                        label="Qty"
+                        type="number"
+                        min="1"
+                        required
+                        value={product.quantity}
+                        onChange={(event) =>
+                          setProducts((previous) =>
+                            previous.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, quantity: event.target.value } : item,
+                            ),
+                          )
+                        }
+                      />
+                      <Input
+                        label="Unit"
+                        required
+                        value={product.unit}
+                        onChange={(event) =>
+                          setProducts((previous) =>
+                            previous.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, unit: event.target.value } : item,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Input
+                        label="Purchase price"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={product.purchasePrice}
+                        onChange={(event) =>
+                          setProducts((previous) =>
+                            previous.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, purchasePrice: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                      <TextArea
+                        label="Product description"
+                        rows={2}
+                        value={product.description}
+                        onChange={(event) =>
+                          setProducts((previous) =>
+                            previous.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, description: event.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                    {products.length > 1 ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() =>
+                          setProducts((previous) => previous.filter((_, itemIndex) => itemIndex !== index))
+                        }
+                      >
+                        Remove product
+                      </Button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+
               <Button type="submit">Save changes</Button>
             </form>
           ) : (
@@ -382,23 +499,20 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         </SectionCard>
       ) : null}
 
-      <SectionCard title="Documents">
+      <SectionCard title="Delivery receipt & photos" description="Tap a photo to open full size.">
         {order.documents.length ? (
-          <div className="space-y-2">
-            {order.documents.map((doc) => (
-              <a
-                key={doc.id}
-                href={doc.dataUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded-2xl border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
-              >
-                {doc.name} · {doc.kind} · {doc.uploadedBy}
-              </a>
-            ))}
-          </div>
+          <PhotoThumbGrid
+            items={order.documents.map((doc) => ({
+              id: doc.id,
+              src: doc.dataUrl,
+              title: `${doc.name} · ${doc.kind}`,
+            }))}
+          />
         ) : (
-          <EmptyState title="No documents yet" description="Delivery proofs and bills appear here." />
+          <EmptyState
+            title="No delivery photos yet"
+            description="Delivery receipt photos uploaded by Mayur appear here."
+          />
         )}
       </SectionCard>
 
@@ -418,7 +532,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         </div>
       </SectionCard>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Link href="/orders">
           <Button variant="secondary">Back to orders</Button>
         </Link>
@@ -432,7 +546,45 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
             <Button variant="secondary">Delivery queue</Button>
           </Link>
         ) : null}
+        {canDelete ? (
+          <Button
+            variant="danger"
+            onClick={() => {
+              setConfirmDelete(true);
+              setDeleteError(null);
+            }}
+          >
+            Delete order
+          </Button>
+        ) : null}
       </div>
+
+      {canDelete && confirmDelete ? (
+        <SectionCard
+          title="Confirm delete"
+          description={`Delete ${order.orderNumber} for ${order.customerName}? This cannot be undone.`}
+        >
+          <p className="mb-3 text-sm text-slate-600">
+            Status: {STATUS_LABELS[order.status]}. Customers and payment records stay intact.
+          </p>
+          {deleteError ? <p className="mb-3 text-sm text-rose-600">{deleteError}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="danger" disabled={deleting} onClick={() => void handleDelete()}>
+              {deleting ? "Deleting…" : "Yes, delete order"}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={deleting}
+              onClick={() => {
+                setConfirmDelete(false);
+                setDeleteError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </SectionCard>
+      ) : null}
     </div>
   );
 }
