@@ -423,6 +423,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                 </p>
               ) : null}
               {order.notes ? <p className="rounded-2xl bg-slate-50 p-3">{order.notes}</p> : null}
+              {order.packingNotes ? (
+                <p className="rounded-2xl bg-amber-50 p-3 text-sm text-slate-800">
+                  <span className="font-medium text-slate-900">Packing note:</span> {order.packingNotes}
+                </p>
+              ) : null}
             </div>
           )}
         </SectionCard>

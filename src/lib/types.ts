@@ -104,6 +104,8 @@ export type Order = {
   gst?: string;
   priority: Priority;
   notes?: string;
+  /** Optional note from packing after accept (changes / exceptions). */
+  packingNotes?: string;
   status: OrderStatus;
   products: OrderProduct[];
   packingChecklist: PackingChecklistItem[];

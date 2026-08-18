@@ -29,6 +29,7 @@ import {
   updateLiveOrderBeforePacking,
   updateLiveOrderItemsQuantities,
   updateLiveOrderStatus,
+  updateLivePackingNotes,
   uploadLiveDeliveryDocuments,
 } from "@/lib/supabase-data";
 import {
@@ -80,6 +81,7 @@ type AppContextValue = {
   updateOrderBeforePacking: (orderId: string, input: CreateOrderInput) => Promise<void>;
   deleteOrder: (orderId: string) => Promise<void>;
   acceptOrder: (orderId: string) => Promise<void>;
+  savePackingNotes: (orderId: string, notes: string) => Promise<void>;
   toggleChecklistItem: (orderId: string, itemId: string) => void;
   markReadyForDelivery: (orderId: string) => Promise<void>;
   startDelivery: (orderId: string) => Promise<void>;
@@ -555,6 +557,81 @@ export function AppProvider({ children }: { children: ReactNode }) {
           },
         );
       });
+    }
+
+    async function savePackingNotes(orderId: string, notes: string) {
+      if (!currentUser || currentUser.role !== "packing") {
+        throw new Error("Only packing can save packing notes");
+      }
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "packing") {
+        throw new Error("Packing notes can only be saved after the order is accepted.");
+      }
+
+      const packingNotes = notes.trim();
+
+      if (liveMode) {
+        await updateLivePackingNotes(orderId, packingNotes, existing.notes);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "packing_note",
+          detail: packingNotes
+            ? `${currentUser.name} added packing note on ${existing.orderNumber}`
+            : `${currentUser.name} cleared packing note on ${existing.orderNumber}`,
+          emoji: "📝",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId,
+          userId: currentUser.id,
+          action: "packing_note",
+          description: packingNotes
+            ? `${event.detail}: ${packingNotes}`
+            : event.detail,
+        });
+        setState((previous) => ({
+          ...previous,
+          orders: previous.orders.map((order) =>
+            order.id === orderId
+              ? { ...order, packingNotes: packingNotes || undefined, updatedAt: new Date().toISOString() }
+              : order,
+          ),
+          auditEvents: mergeAuditEvents([event], previous.auditEvents),
+        }));
+        try {
+          await refreshLive();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      setState((previous) =>
+        pushEvent(
+          {
+            ...previous,
+            orders: previous.orders.map((order) =>
+              order.id === orderId
+                ? { ...order, packingNotes: packingNotes || undefined, updatedAt: new Date().toISOString() }
+                : order,
+            ),
+          },
+          {
+            orderId,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: "packing_note",
+            detail: packingNotes
+              ? `${currentUser.name} added packing note on ${existing.orderNumber}`
+              : `${currentUser.name} cleared packing note on ${existing.orderNumber}`,
+            emoji: "📝",
+          },
+        ),
+      );
     }
 
     function toggleChecklistItem(orderId: string, itemId: string) {
@@ -1094,6 +1171,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updateOrderBeforePacking,
       deleteOrder,
       acceptOrder,
+      savePackingNotes,
       toggleChecklistItem,
       markReadyForDelivery,
       startDelivery,

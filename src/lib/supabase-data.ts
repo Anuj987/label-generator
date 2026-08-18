@@ -128,6 +128,33 @@ function mapItem(row: Record<string, unknown>): OrderProduct {
   };
 }
 
+const PACKING_NOTE_MARKER = "\n\n---\nPacking note:\n";
+
+/** Split admin remarks from an appended packing note section. */
+export function splitOrderRemarks(remarks?: string | null): {
+  adminNotes?: string;
+  packingNotes?: string;
+} {
+  const raw = remarks?.toString() ?? "";
+  if (!raw.trim()) return {};
+  const marker = "---\nPacking note:\n";
+  const index = raw.indexOf(marker);
+  if (index === -1) {
+    return { adminNotes: raw.trim() || undefined };
+  }
+  const adminNotes = raw.slice(0, index).trim() || undefined;
+  const packingNotes = raw.slice(index + marker.length).trim() || undefined;
+  return { adminNotes, packingNotes };
+}
+
+export function mergeOrderRemarks(adminNotes?: string, packingNotes?: string) {
+  const admin = adminNotes?.trim() || "";
+  const packing = packingNotes?.trim() || "";
+  if (!packing) return admin || null;
+  if (!admin) return `---\nPacking note:\n${packing}`;
+  return `${admin}${PACKING_NOTE_MARKER}${packing}`;
+}
+
 function mapOrder(
   row: Record<string, unknown>,
   customer: Record<string, unknown> | null,
@@ -137,6 +164,8 @@ function mapOrder(
   const products = items.map(mapItem);
   const status = STATUS_FROM_DB[String(row.status)] ?? "new";
   const createdById = row.created_by ? String(row.created_by) : "";
+  const fromColumn = row.packing_notes ? String(row.packing_notes) : undefined;
+  const split = splitOrderRemarks(row.remarks ? String(row.remarks) : undefined);
   return {
     id: String(row.id),
     orderNumber: String(row.order_number ?? ""),
@@ -149,7 +178,8 @@ function mapOrder(
     address: String(customer?.address ?? ""),
     gst: customer?.gst_number ? String(customer.gst_number) : undefined,
     priority: (String(row.priority ?? "normal") as Priority) || "normal",
-    notes: row.remarks ? String(row.remarks) : undefined,
+    notes: split.adminNotes,
+    packingNotes: fromColumn || split.packingNotes,
     status,
     products,
     packingChecklist: applyChecklistCompletions(String(row.id), products),
@@ -657,6 +687,32 @@ export async function updateLiveOrderStatus(
   };
   const result = await supabase.from("orders").update(payload).eq("id", orderId).select("*").single();
   if (result.error) throw result.error;
+  return result.data;
+}
+
+/**
+ * Packing-only optional note after accept.
+ * Uses existing remarks field with a packing marker (no migration required).
+ * Does not grant packing rights to edit other order fields.
+ */
+export async function updateLivePackingNotes(orderId: string, packingNotes: string, adminNotes?: string) {
+  if (!supabaseConfigured || !supabase) {
+    throw new Error("Supabase is not configured");
+  }
+
+  const remarks = mergeOrderRemarks(adminNotes, packingNotes);
+  const result = await supabase
+    .from("orders")
+    .update({ remarks })
+    .eq("id", orderId)
+    .eq("status", "PACKING")
+    .select("*")
+    .maybeSingle();
+
+  if (result.error) throw result.error;
+  if (!result.data) {
+    throw new Error("Packing notes can only be saved while the order is in Packing status.");
+  }
   return result.data;
 }
 

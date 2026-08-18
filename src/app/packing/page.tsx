@@ -1,17 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
-import { Badge, Button, EmptyState, PageHeader, SectionCard } from "@/components/ui";
+import { Badge, Button, EmptyState, PageHeader, SectionCard, TextArea } from "@/components/ui";
 import { PRIORITY_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
-import { formatDate } from "@/lib/storage";
+import { errorMessage, formatDate } from "@/lib/storage";
 
 export default function PackingPage() {
   const {
     acceptOrder,
     currentUser,
     markReadyForDelivery,
+    savePackingNotes,
     state,
     toggleChecklistItem,
   } = useAppContext();
@@ -24,6 +25,23 @@ export default function PackingPage() {
     [state.orders],
   );
 
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setNoteDrafts((previous) => {
+      const next = { ...previous };
+      for (const order of queue) {
+        if (order.status !== "packing") continue;
+        if (next[order.id] === undefined) {
+          next[order.id] = order.packingNotes ?? "";
+        }
+      }
+      return next;
+    });
+  }, [queue]);
+
   if (!currentUser) return null;
 
   if (currentUser.role !== "packing") {
@@ -35,13 +53,27 @@ export default function PackingPage() {
     );
   }
 
+  async function handleSaveNote(orderId: string) {
+    setSavingId(orderId);
+    setNoteError(null);
+    try {
+      await savePackingNotes(orderId, noteDrafts[orderId] ?? "");
+    } catch (err) {
+      setNoteError(errorMessage(err, "Failed to save packing note"));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
         eyebrow="Packing · Somnath"
         title="Packing queue"
-        description="View new orders, accept when ready, complete the checklist, then mark Ready for Delivery."
+        description="View new orders, accept when ready, add an optional note for any changes, then mark Ready for Delivery."
       />
+
+      {noteError ? <p className="text-sm text-rose-600">{noteError}</p> : null}
 
       <div className="space-y-4">
         {queue.map((order) => {
@@ -65,6 +97,11 @@ export default function PackingPage() {
                   Products: {order.products.length} · Total qty: {totalQuantity(order.products)}
                 </p>
                 {order.acceptedBy ? <p>Accepted by: {order.acceptedBy}</p> : null}
+                {order.notes ? (
+                  <p className="sm:col-span-2 rounded-2xl bg-slate-50 px-3 py-2 text-slate-700">
+                    Order notes: {order.notes}
+                  </p>
+                ) : null}
               </div>
 
               {order.status === "new" ? (
@@ -92,12 +129,32 @@ export default function PackingPage() {
                       </label>
                     ))}
                   </div>
+
+                  <TextArea
+                    label="Packing note (optional)"
+                    placeholder="Any changes, missing items, substitutions, or special packing notes"
+                    rows={3}
+                    value={noteDrafts[order.id] ?? ""}
+                    onChange={(event) =>
+                      setNoteDrafts((previous) => ({
+                        ...previous,
+                        [order.id]: event.target.value,
+                      }))
+                    }
+                  />
                   <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      disabled={savingId === order.id}
+                      onClick={() => void handleSaveNote(order.id)}
+                    >
+                      {savingId === order.id ? "Saving…" : "Save note"}
+                    </Button>
                     <Button disabled={!allDone} onClick={() => markReadyForDelivery(order.id)}>
                       Ready for Delivery
                     </Button>
                     <Link href={`/orders/${order.id}`}>
-                      <Button variant="secondary">View order</Button>
+                      <Button variant="ghost">View order</Button>
                     </Link>
                   </div>
                 </div>
