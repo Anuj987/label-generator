@@ -719,6 +719,7 @@ export async function updateLivePackingNotes(orderId: string, packingNotes: stri
 /**
  * Admin-only order delete.
  * Prefers SECURITY DEFINER RPC `delete_nt_order` (role-checked server-side).
+ * Falls back to authenticated deletes of known child tables, then the order.
  * Does not delete customers or payment collection rows.
  */
 export async function deleteLiveOrder(orderId: string) {
@@ -729,19 +730,43 @@ export async function deleteLiveOrder(orderId: string) {
   const rpc = await supabase.rpc("delete_nt_order", { p_order_id: orderId });
   if (!rpc.error) return;
 
-  const message =
+  const rpcMessage =
     rpc.error && typeof rpc.error === "object" && "message" in rpc.error
       ? String((rpc.error as { message?: string }).message || "Order delete failed")
       : "Order delete failed";
 
-  // If the migration has not been applied yet, surface a clear admin action.
-  if (/could not find the function|schema cache|does not exist/i.test(message)) {
+  // Fallback path: admin JWT + RLS delete policy (skips packing_checklist_items —
+  // live schema has that table without an order_id column, which broke the old RPC).
+  const childTables = [
+    "order_items",
+    "packing_events",
+    "delivery_events",
+    "delivery_documents",
+    "audit_logs",
+  ] as const;
+
+  for (const table of childTables) {
+    const child = await supabase.from(table).delete().eq("order_id", orderId);
+    if (child.error && !/column .* does not exist|could not find/i.test(child.error.message)) {
+      // Continue trying other children; final order delete is the source of truth.
+      console.warn(`Order delete cleanup skipped for ${table}:`, child.error.message);
+    }
+  }
+
+  const deleted = await supabase.from("orders").delete().eq("id", orderId).select("id").maybeSingle();
+  if (!deleted.error && deleted.data) return;
+
+  if (/could not find the function|schema cache/i.test(rpcMessage)) {
     throw new Error(
-      "Order delete is not enabled in Supabase yet. Run supabase/order-permissions.sql in the SQL Editor, then try again.",
+      "Order delete RPC needs an update in Supabase. Re-run supabase/order-permissions.sql, then try again.",
     );
   }
 
-  throw new Error(message);
+  throw new Error(
+    deleted.error?.message ||
+      rpcMessage ||
+      "Order delete failed. Re-run supabase/order-permissions.sql if this keeps happening.",
+  );
 }
 
 export async function updateLiveOrderItemsQuantities(
