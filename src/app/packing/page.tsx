@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Badge, Button, EmptyState, PageHeader, SectionCard, TextArea } from "@/components/ui";
 import { PRIORITY_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
@@ -29,19 +29,6 @@ export default function PackingPage() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setNoteDrafts((previous) => {
-      const next = { ...previous };
-      for (const order of queue) {
-        if (order.status !== "packing") continue;
-        if (next[order.id] === undefined) {
-          next[order.id] = order.packingNotes ?? "";
-        }
-      }
-      return next;
-    });
-  }, [queue]);
-
   if (!currentUser) return null;
 
   if (currentUser.role !== "packing") {
@@ -53,11 +40,12 @@ export default function PackingPage() {
     );
   }
 
-  async function handleSaveNote(orderId: string) {
+  async function handleSaveNote(orderId: string, fallback: string) {
     setSavingId(orderId);
     setNoteError(null);
     try {
-      await savePackingNotes(orderId, noteDrafts[orderId] ?? "");
+      const value = noteDrafts[orderId] ?? fallback;
+      await savePackingNotes(orderId, value);
     } catch (err) {
       setNoteError(errorMessage(err, "Failed to save packing note"));
     } finally {
@@ -78,6 +66,7 @@ export default function PackingPage() {
       <div className="space-y-4">
         {queue.map((order) => {
           const allDone = order.packingChecklist.every((item) => item.completed);
+          const noteValue = noteDrafts[order.id] ?? order.packingNotes ?? "";
 
           return (
             <SectionCard
@@ -134,7 +123,7 @@ export default function PackingPage() {
                     label="Packing note (optional)"
                     placeholder="Any changes, missing items, substitutions, or special packing notes"
                     rows={3}
-                    value={noteDrafts[order.id] ?? ""}
+                    value={noteValue}
                     onChange={(event) =>
                       setNoteDrafts((previous) => ({
                         ...previous,
@@ -146,7 +135,7 @@ export default function PackingPage() {
                     <Button
                       variant="secondary"
                       disabled={savingId === order.id}
-                      onClick={() => void handleSaveNote(order.id)}
+                      onClick={() => void handleSaveNote(order.id, order.packingNotes ?? "")}
                     >
                       {savingId === order.id ? "Saving…" : "Save note"}
                     </Button>
