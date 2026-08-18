@@ -4,6 +4,7 @@ import { Download } from "lucide-react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Button, EmptyState, PageHeader, SectionCard } from "@/components/ui";
 import {
+  buildExpensesCsv,
   buildOrderProductsCsv,
   buildOrdersCsv,
   buildPaymentsCsv,
@@ -37,10 +38,15 @@ export default function ExportPage() {
     downloadCsv(stampFilename("payments"), buildPaymentsCsv(state.payments, state.orders));
   }
 
+  function downloadExpenses() {
+    downloadCsv(stampFilename("expenses"), buildExpensesCsv(state.expenses));
+  }
+
   function downloadAll() {
     downloadOrders();
     window.setTimeout(downloadProducts, 250);
     window.setTimeout(downloadPayments, 500);
+    window.setTimeout(downloadExpenses, 750);
   }
 
   return (
@@ -53,7 +59,7 @@ export default function ExportPage() {
 
       <SectionCard
         title="Quick download"
-        description={`${state.orders.length} orders · ${state.payments.length} payments`}
+        description={`${state.orders.length} orders · ${state.payments.length} payments · ${state.expenses.length} expenses`}
       >
         <div className="flex flex-wrap gap-3">
           <Button onClick={downloadAll}>
@@ -69,10 +75,13 @@ export default function ExportPage() {
           <Button variant="secondary" onClick={downloadPayments}>
             Payments
           </Button>
+          <Button variant="secondary" onClick={downloadExpenses}>
+            Expenses
+          </Button>
         </div>
       </SectionCard>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
         <SectionCard title="Orders file" description="One row per order with status, dates, totals.">
           <p className="mb-4 text-sm text-slate-600">
             Customer, invoice, delivery date, status, total purchase cost, packing and delivery
@@ -105,6 +114,16 @@ export default function ExportPage() {
           <Button variant="secondary" onClick={downloadPayments}>
             <Download className="mr-2 h-4 w-4" />
             Download payments.csv
+          </Button>
+        </SectionCard>
+
+        <SectionCard title="Expenses file" description="Staff expense submissions for review.">
+          <p className="mb-4 text-sm text-slate-600">
+            Date, person, category, amount, and description. Receipt files stay in private Storage.
+          </p>
+          <Button variant="secondary" onClick={downloadExpenses}>
+            <Download className="mr-2 h-4 w-4" />
+            Download expenses.csv
           </Button>
         </SectionCard>
       </div>
