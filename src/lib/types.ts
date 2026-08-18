@@ -13,6 +13,14 @@ export type Priority = "normal" | "urgent" | "very_urgent";
 
 export type PaymentMode = "cash" | "upi" | "bank_transfer" | "cheque";
 
+export type ExpenseCategory =
+  | "Fuel"
+  | "Transport"
+  | "Food"
+  | "Packing Material"
+  | "Loading/Unloading"
+  | "Other";
+
 export type DocumentKind =
   | "signed_bill"
   | "return_photo"
@@ -37,6 +45,8 @@ export type Customer = {
   mobile?: string;
   gst?: string;
   notes?: string;
+  contactPerson?: string;
+  address?: string;
   createdAt: string;
 };
 
@@ -94,6 +104,8 @@ export type Order = {
   gst?: string;
   priority: Priority;
   notes?: string;
+  /** Optional note from packing after accept (changes / exceptions). */
+  packingNotes?: string;
   status: OrderStatus;
   products: OrderProduct[];
   packingChecklist: PackingChecklistItem[];
@@ -129,6 +141,29 @@ export type Payment = {
   createdAt: string;
 };
 
+export type Expense = {
+  id: string;
+  amount: number;
+  expenseDate: string;
+  category: ExpenseCategory;
+  description?: string;
+  submittedBy: string;
+  submittedByName: string;
+  receiptPath?: string;
+  receiptFileName?: string;
+  /** Local/preview URL only — never public Storage. */
+  receiptPreviewUrl?: string;
+  createdAt: string;
+};
+
+export type ExpenseInput = {
+  amount: number;
+  expenseDate: string;
+  category: ExpenseCategory;
+  description?: string;
+  receipt?: { name: string; dataUrl: string };
+};
+
 export type AuditEvent = {
   id: string;
   orderId?: string;
@@ -145,6 +180,7 @@ export type AppState = {
   customers: Customer[];
   orders: Order[];
   payments: Payment[];
+  expenses: Expense[];
   auditEvents: AuditEvent[];
   nextOrderSequence: number;
 };
@@ -165,13 +201,13 @@ export type OrderProductInput = {
 };
 
 export type CreateOrderInput = {
-  invoiceNumber: string;
+  invoiceNumber?: string;
   invoiceDate: string;
   deliveryDate: string;
   customerName: string;
-  contactPerson: string;
-  mobile: string;
-  address: string;
+  contactPerson?: string;
+  mobile?: string;
+  address?: string;
   gst?: string;
   priority: Priority;
   notes?: string;
@@ -189,5 +225,7 @@ export type PaymentInput = {
   mode: PaymentMode;
   orderId?: string;
   notes?: string;
+  chequeNumber?: string;
+  paymentDate?: string;
   files?: { name: string; kind: DocumentKind; dataUrl: string }[];
 };

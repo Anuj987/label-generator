@@ -13,9 +13,11 @@ import {
   Wallet,
   ClipboardList,
   Download,
+  Receipt,
   X,
 } from "lucide-react";
 import { useAppContext } from "@/components/providers/app-provider";
+import { EnableNotificationsControl } from "@/components/enable-notifications-control";
 import { Button, Input } from "@/components/ui";
 import { ROLE_LABELS } from "@/lib/demo-data";
 import type { Role } from "@/lib/types";
@@ -26,16 +28,19 @@ const NAV: Record<Role, Array<{ href: string; label: string; icon: typeof Users 
     { href: "/customers", label: "Customers", icon: Users },
     { href: "/orders", label: "Orders", icon: ClipboardList },
     { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/expenses", label: "Expenses", icon: Receipt },
     { href: "/export", label: "Export", icon: Download },
     { href: "/search", label: "Search", icon: Search },
   ],
   packing: [
     { href: "/packing", label: "Packing", icon: Package },
+    { href: "/expenses", label: "Expenses", icon: Receipt },
     { href: "/search", label: "Search", icon: Search },
   ],
   delivery: [
     { href: "/delivery", label: "Delivery", icon: Truck },
     { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/expenses", label: "Expenses", icon: Receipt },
     { href: "/search", label: "Search", icon: Search },
   ],
 };
@@ -114,11 +119,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             <p className="text-sm font-medium text-slate-800">Operations Console</p>
           </div>
           <div className="flex items-center gap-2">
+            <EnableNotificationsControl />
             <div className="hidden text-right sm:block">
               <p className="text-sm font-semibold text-slate-900">{currentUser.name}</p>
               <p className="text-xs text-slate-500">{ROLE_LABELS[currentUser.role]}</p>
             </div>
-            <Button variant="secondary" onClick={() => { logout(); router.push("/login"); }}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void logout().then(() => router.push("/login"));
+              }}
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Logout
             </Button>

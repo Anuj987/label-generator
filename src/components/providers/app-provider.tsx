@@ -9,38 +9,61 @@ import {
   useMemo,
   useState,
 } from "react";
-import { createId, generatePackingChecklist } from "@/lib/demo-data";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 import {
-  fileToDataUrl,
-  getRoleCookie,
-  loadState,
-  minutesBetween,
-  saveState,
-  setRoleCookie,
-} from "@/lib/storage";
-import { supabaseConfigured } from "@/lib/supabase";
+  getSessionStaffProfile,
+  signInWithEmailPassword,
+  signOutStaff,
+} from "@/lib/supabase-auth";
 import {
-  SUPABASE_USERS,
   createLiveCustomer,
+  createLiveExpense,
   createLiveOrder,
   createLivePayment,
+  deleteLiveOrder,
+  loadLiveExpensesFromDb,
   loadLiveState,
   persistChecklistCompletion,
+  recordLiveAuditLog,
   subscribeLiveChanges,
   updateLiveOrderBeforePacking,
   updateLiveOrderItemsQuantities,
   updateLiveOrderStatus,
-  userForRole,
+  updateLivePackingNotes,
+  uploadLiveDeliveryDocuments,
 } from "@/lib/supabase-data";
+import {
+  appendLiveAuditEvent,
+  appendLiveExpense,
+  appendLivePayment,
+  fileToDataUrl,
+  loadLiveAuditEvents,
+  loadLiveExpenses,
+  loadLivePayments,
+  loadState,
+  mergeAuditEvents,
+  mergeExpenses,
+  mergePayments,
+  minutesBetween,
+  saveLiveAuditEvents,
+  saveLiveExpenses,
+  saveLivePayments,
+  saveState,
+  setRoleCookie,
+} from "@/lib/storage";
+import { fetchOpsSync, publishOpsSync } from "@/lib/ops-sync";
+import { requestNewOrderNotification } from "@/lib/notify-new-order";
+import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import type {
   AppState,
+  AuditEvent,
   CreateOrderInput,
   CustomerInput,
   DocumentKind,
+  ExpenseInput,
   Order,
   PartialDeliveryLine,
   PaymentInput,
-  Role,
   UploadedFile,
   UserProfile,
 } from "@/lib/types";
@@ -50,13 +73,15 @@ type AppContextValue = {
   liveMode: boolean;
   currentUser: UserProfile | null;
   state: AppState;
-  login: (role: Role) => void;
-  logout: () => void;
+  loginWithPassword: (email: string, password: string) => Promise<UserProfile>;
+  logout: () => Promise<void>;
   refreshLive: () => Promise<void>;
   createCustomer: (input: CustomerInput) => Promise<void>;
   createOrder: (input: CreateOrderInput) => Promise<Order>;
   updateOrderBeforePacking: (orderId: string, input: CreateOrderInput) => Promise<void>;
+  deleteOrder: (orderId: string) => Promise<void>;
   acceptOrder: (orderId: string) => Promise<void>;
+  savePackingNotes: (orderId: string, notes: string) => Promise<void>;
   toggleChecklistItem: (orderId: string, itemId: string) => void;
   markReadyForDelivery: (orderId: string) => Promise<void>;
   startDelivery: (orderId: string) => Promise<void>;
@@ -69,6 +94,7 @@ type AppContextValue = {
   ) => Promise<void>;
   completeFullReturn: (orderId: string, reason: string, files: File[]) => Promise<void>;
   recordPayment: (input: PaymentInput) => Promise<void>;
+  createExpense: (input: ExpenseInput) => Promise<void>;
   addOrderDocuments: (orderId: string, files: File[], kind: DocumentKind) => Promise<void>;
   searchAll: (query: string) => {
     customers: AppState["customers"];
@@ -104,32 +130,108 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshLive = useCallback(async () => {
     if (!liveMode) return;
-    const live = await loadLiveState();
-    setState(live);
+    const [live, sync, remoteExpenses] = await Promise.all([
+      loadLiveState(),
+      fetchOpsSync(),
+      loadLiveExpensesFromDb(),
+    ]);
+    // Keep local caches aligned with shared sync so phones see the same payments/activity.
+    if (sync.sync) {
+      saveLivePayments(mergePayments(sync.payments, loadLivePayments()));
+      saveLiveAuditEvents(mergeAuditEvents(sync.events, loadLiveAuditEvents()));
+    }
+    const expenses = mergeExpenses(remoteExpenses, loadLiveExpenses());
+    // Prefer remote when the DB table is live; still keep local drafts until migration runs.
+    if (remoteExpenses.length) {
+      saveLiveExpenses(mergeExpenses(remoteExpenses, loadLiveExpenses()));
+    }
+    setState((previous) => ({
+      ...live,
+      auditEvents: mergeAuditEvents(
+        previous.auditEvents,
+        live.auditEvents,
+        sync.events,
+        loadLiveAuditEvents(),
+      ),
+      payments: mergePayments(previous.payments, live.payments, sync.payments, loadLivePayments()),
+      expenses: mergeExpenses(previous.expenses, expenses),
+    }));
   }, [liveMode]);
+
+  function rememberLiveEvent(event: AuditEvent) {
+    appendLiveAuditEvent(event);
+    void publishOpsSync({ event });
+    setState((previous) => ({
+      ...previous,
+      auditEvents: mergeAuditEvents([event], previous.auditEvents),
+    }));
+  }
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe = () => {};
 
     async function boot() {
-      const role = getRoleCookie();
-      const user = role
-        ? liveMode
-          ? userForRole(role)
-          : SUPABASE_USERS.find((item) => item.role === role) ?? null
-        : null;
-      if (!cancelled) setCurrentUser(user);
+      // Clear legacy passwordless role cookie so live mode cannot bypass Auth.
+      if (liveMode) setRoleCookie(null);
 
       try {
         if (liveMode) {
-          const live = await loadLiveState();
-          if (!cancelled) setState(live);
-        } else if (!cancelled) {
-          setState(loadState());
+          const profile = await getSessionStaffProfile();
+          if (!cancelled) setCurrentUser(profile);
+          const [live, sync, remoteExpenses] = await Promise.all([
+            loadLiveState(),
+            fetchOpsSync(),
+            loadLiveExpensesFromDb(),
+          ]);
+          if (sync.sync) {
+            const localPayments = loadLivePayments();
+            const localEvents = loadLiveAuditEvents();
+            // Upload any device-local payments/events so other phones can see them.
+            if (localPayments.length || localEvents.length) {
+              await publishOpsSync({ payments: localPayments, events: localEvents });
+            }
+            saveLivePayments(mergePayments(sync.payments, localPayments));
+            saveLiveAuditEvents(mergeAuditEvents(sync.events, localEvents));
+          }
+          const expenses = mergeExpenses(remoteExpenses, loadLiveExpenses());
+          if (remoteExpenses.length) {
+            saveLiveExpenses(expenses);
+          }
+          if (!cancelled) {
+            setState({
+              ...live,
+              payments: mergePayments(live.payments, sync.payments, loadLivePayments()),
+              expenses,
+              auditEvents: mergeAuditEvents(live.auditEvents, sync.events, loadLiveAuditEvents()),
+            });
+          }
+
+          if (supabase) {
+            const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+              if (cancelled) return;
+              if (event === "SIGNED_OUT" || !session?.user) {
+                setCurrentUser(null);
+                return;
+              }
+              if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") {
+                const next = await getSessionStaffProfile();
+                if (!cancelled) setCurrentUser(next);
+              }
+            });
+            unsubscribe = () => data.subscription.unsubscribe();
+          }
+        } else {
+          // Demo mode only: no passwordless cookie login when Supabase is configured.
+          if (!cancelled) setCurrentUser(null);
+          if (!cancelled) setState(loadState());
         }
       } catch (error) {
-        console.error("Failed to load live Supabase data", error);
-        if (!cancelled) setState(loadState());
+        console.error("Failed to boot app session", error);
+        if (!cancelled) {
+          setCurrentUser(null);
+          setState(loadState());
+        }
       } finally {
         if (!cancelled) setReady(true);
       }
@@ -138,6 +240,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void boot();
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [liveMode]);
 
@@ -154,15 +257,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [liveMode, ready, refreshLive]);
 
   const value = useMemo<AppContextValue>(() => {
-    function login(role: Role) {
-      const user = liveMode
-        ? userForRole(role)
-        : SUPABASE_USERS.find((item) => item.role === role) ?? null;
-      setRoleCookie(role);
-      setCurrentUser(user);
+    async function loginWithPassword(email: string, password: string) {
+      if (!liveMode) {
+        throw new Error("Password login requires Supabase Auth.");
+      }
+      const profile = await signInWithEmailPassword(email, password);
+      setRoleCookie(null);
+      setCurrentUser(profile);
+      await refreshLive();
+      return profile;
     }
 
-    function logout() {
+    async function logout() {
+      if (liveMode) await signOutStaff();
       setRoleCookie(null);
       setCurrentUser(null);
     }
@@ -203,6 +310,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (liveMode) {
         const order = await createLiveOrder(input, currentUser, state.orders);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId: order.id,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_created",
+          detail: `Order ${order.orderNumber} created by ${currentUser.name} for ${order.customerName}`,
+          emoji: "🟢",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId: order.id,
+          userId: currentUser.id,
+          action: "order_created",
+          description: event.detail,
+        });
+        // Push only after a successful brand-new order INSERT (never on edits/status).
+        void requestNewOrderNotification({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+        });
         await refreshLive();
         return order;
       }
@@ -216,13 +345,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const order: Order = {
         id: createId("ord"),
         orderNumber,
-        invoiceNumber: input.invoiceNumber,
+        invoiceNumber: input.invoiceNumber?.trim() || "",
         invoiceDate: input.invoiceDate,
         deliveryDate: input.deliveryDate,
         customerName: input.customerName.trim(),
-        contactPerson: input.contactPerson.trim(),
-        mobile: input.mobile.trim(),
-        address: input.address.trim(),
+        contactPerson: input.contactPerson?.trim() || "",
+        mobile: input.mobile?.trim() || "",
+        address: input.address?.trim() || "",
         gst: input.gst?.trim() || undefined,
         priority: input.priority,
         notes: input.notes,
@@ -261,47 +390,139 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function updateOrderBeforePacking(orderId: string, input: CreateOrderInput) {
       if (!currentUser || currentUser.role !== "admin") return;
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "new") return;
+
+      const productCount = input.products.filter((product) => product.productName.trim()).length;
+      const detail = `${currentUser.name} edited ${existing.orderNumber} · ${input.customerName.trim()} · ${productCount} product${productCount === 1 ? "" : "s"}`;
+
       if (liveMode) {
         await updateLiveOrderBeforePacking(orderId, input);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_edited",
+          detail,
+          emoji: "✏️",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId,
+          userId: currentUser.id,
+          action: "order_edited",
+          description: detail,
+        });
         await refreshLive();
         return;
       }
 
       setState((previous) => {
-        const existing = previous.orders.find((order) => order.id === orderId);
-        if (!existing || existing.status !== "new") return previous;
+        const target = previous.orders.find((order) => order.id === orderId);
+        if (!target || target.status !== "new") return previous;
         const products = input.products.map((product) => ({
           id: createId("prod"),
           ...product,
         }));
-        return {
-          ...previous,
-          orders: previous.orders.map((order) =>
-            order.id === orderId
-              ? {
-                  ...order,
-                  invoiceNumber: input.invoiceNumber,
-                  invoiceDate: input.invoiceDate,
-                  deliveryDate: input.deliveryDate,
-                  customerName: input.customerName.trim(),
-                  contactPerson: input.contactPerson.trim(),
-                  mobile: input.mobile.trim(),
-                  address: input.address.trim(),
-                  gst: input.gst?.trim() || undefined,
-                  priority: input.priority,
-                  notes: input.notes,
-                  products,
-                  packingChecklist: generatePackingChecklist(products),
-                  updatedAt: new Date().toISOString(),
-                }
-              : order,
-          ),
-        };
+        return pushEvent(
+          {
+            ...previous,
+            orders: previous.orders.map((order) =>
+              order.id === orderId
+                ? {
+                    ...order,
+                    invoiceNumber: input.invoiceNumber?.trim() || "",
+                    invoiceDate: input.invoiceDate,
+                    deliveryDate: input.deliveryDate,
+                    customerName: input.customerName.trim(),
+                    contactPerson: input.contactPerson?.trim() || "",
+                    mobile: input.mobile?.trim() || "",
+                    address: input.address?.trim() || "",
+                    gst: input.gst?.trim() || undefined,
+                    priority: input.priority,
+                    notes: input.notes,
+                    products,
+                    packingChecklist: generatePackingChecklist(products),
+                    updatedAt: new Date().toISOString(),
+                  }
+                : order,
+            ),
+          },
+          {
+            orderId,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: "order_edited",
+            detail,
+            emoji: "✏️",
+          },
+        );
       });
+    }
+
+    async function deleteOrder(orderId: string) {
+      if (!currentUser || currentUser.role !== "admin") {
+        throw new Error("Only admin can delete orders");
+      }
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing) throw new Error("Order not found");
+
+      if (liveMode) {
+        await deleteLiveOrder(orderId);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_deleted",
+          detail: `${currentUser.name} deleted ${existing.orderNumber} · ${existing.customerName}`,
+          emoji: "🗑️",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId,
+          userId: currentUser.id,
+          action: "order_deleted",
+          description: event.detail,
+        });
+        setState((previous) => ({
+          ...previous,
+          orders: previous.orders.filter((order) => order.id !== orderId),
+          auditEvents: mergeAuditEvents([event], previous.auditEvents),
+        }));
+        try {
+          await refreshLive();
+        } catch {
+          // ignore refresh failures after delete
+        }
+        return;
+      }
+
+      setState((previous) =>
+        pushEvent(
+          {
+            ...previous,
+            orders: previous.orders.filter((order) => order.id !== orderId),
+          },
+          {
+            orderId,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: "order_deleted",
+            detail: `${currentUser.name} deleted ${existing.orderNumber} · ${existing.customerName}`,
+            emoji: "🗑️",
+          },
+        ),
+      );
     }
 
     async function acceptOrder(orderId: string) {
       if (!currentUser || currentUser.role !== "packing") return;
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "new") return;
       const now = new Date().toISOString();
       if (liveMode) {
         await updateLiveOrderStatus(orderId, "packing", { packing_started_at: now });
@@ -336,6 +557,81 @@ export function AppProvider({ children }: { children: ReactNode }) {
           },
         );
       });
+    }
+
+    async function savePackingNotes(orderId: string, notes: string) {
+      if (!currentUser || currentUser.role !== "packing") {
+        throw new Error("Only packing can save packing notes");
+      }
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "packing") {
+        throw new Error("Packing notes can only be saved after the order is accepted.");
+      }
+
+      const packingNotes = notes.trim();
+
+      if (liveMode) {
+        await updateLivePackingNotes(orderId, packingNotes, existing.notes);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "packing_note",
+          detail: packingNotes
+            ? `${currentUser.name} added packing note on ${existing.orderNumber}`
+            : `${currentUser.name} cleared packing note on ${existing.orderNumber}`,
+          emoji: "📝",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId,
+          userId: currentUser.id,
+          action: "packing_note",
+          description: packingNotes
+            ? `${event.detail}: ${packingNotes}`
+            : event.detail,
+        });
+        setState((previous) => ({
+          ...previous,
+          orders: previous.orders.map((order) =>
+            order.id === orderId
+              ? { ...order, packingNotes: packingNotes || undefined, updatedAt: new Date().toISOString() }
+              : order,
+          ),
+          auditEvents: mergeAuditEvents([event], previous.auditEvents),
+        }));
+        try {
+          await refreshLive();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      setState((previous) =>
+        pushEvent(
+          {
+            ...previous,
+            orders: previous.orders.map((order) =>
+              order.id === orderId
+                ? { ...order, packingNotes: packingNotes || undefined, updatedAt: new Date().toISOString() }
+                : order,
+            ),
+          },
+          {
+            orderId,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: "packing_note",
+            detail: packingNotes
+              ? `${currentUser.name} added packing note on ${existing.orderNumber}`
+              : `${currentUser.name} cleared packing note on ${existing.orderNumber}`,
+            emoji: "📝",
+          },
+        ),
+      );
     }
 
     function toggleChecklistItem(orderId: string, itemId: string) {
@@ -406,6 +702,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function startDelivery(orderId: string) {
       if (!currentUser || currentUser.role !== "delivery") return;
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "ready") return;
       const now = new Date().toISOString();
       if (liveMode) {
         await updateLiveOrderStatus(orderId, "out_for_delivery", { delivery_started_at: now });
@@ -472,6 +770,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           delivery_instructions: notes || null,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -534,6 +845,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           delivery_instructions: notes || null,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -580,6 +904,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           delivery_completed_at: now,
           return_reason: reason,
         });
+        if (docs.length) {
+          await uploadLiveDeliveryDocuments(
+            orderId,
+            docs.map((doc) => ({
+              name: doc.name,
+              dataUrl: doc.dataUrl,
+              mimeType: doc.dataUrl.startsWith("data:")
+                ? doc.dataUrl.slice(5, doc.dataUrl.indexOf(";"))
+                : "image/jpeg",
+            })),
+            currentUser.id,
+          );
+        }
         await refreshLive();
         return;
       }
@@ -620,8 +957,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (currentUser.role === "packing") return;
 
       if (liveMode) {
-        await createLivePayment(input, currentUser);
-        await refreshLive();
+        const payment = await createLivePayment(input, currentUser);
+        try {
+          appendLivePayment(payment);
+        } catch {
+          // ignore phone storage quota errors
+        }
+        const event: AuditEvent = {
+          id: createId("evt"),
+          paymentId: payment.id,
+          orderId: input.orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "payment_collected",
+          detail: `Payment of ₹${input.amount.toLocaleString("en-IN")} collected from ${payment.customerName}`,
+          emoji: "💰",
+          createdAt: new Date().toISOString(),
+        };
+        try {
+          rememberLiveEvent(event);
+        } catch {
+          // ignore
+        }
+        void recordLiveAuditLog({
+          orderId: input.orderId,
+          userId: currentUser.id,
+          action: "payment_collected",
+          description: event.detail,
+        });
+        void publishOpsSync({ payment, event });
+        try {
+          await refreshLive();
+        } catch {
+          // Payment already saved — don't fail the UI if refresh fails on poor mobile network.
+        }
+        setState((previous) => ({
+          ...previous,
+          payments: mergePayments([payment], previous.payments),
+          auditEvents: mergeAuditEvents([event], previous.auditEvents),
+        }));
         return;
       }
 
@@ -671,6 +1045,71 @@ export function AppProvider({ children }: { children: ReactNode }) {
           },
         ),
       );
+    }
+
+    async function createExpense(input: ExpenseInput) {
+      if (!currentUser) return;
+      if (!input.amount || input.amount <= 0) {
+        throw new Error("Amount is required");
+      }
+      if (!input.expenseDate) {
+        throw new Error("Date is required");
+      }
+      if (!input.category) {
+        throw new Error("Category is required");
+      }
+
+      if (liveMode) {
+        try {
+          const expense = await createLiveExpense(input, currentUser);
+          try {
+            appendLiveExpense(expense);
+          } catch {
+            // ignore quota
+          }
+          setState((previous) => ({
+            ...previous,
+            expenses: mergeExpenses([expense], previous.expenses),
+          }));
+          try {
+            await refreshLive();
+          } catch {
+            // ignore refresh failures
+          }
+          return;
+        } catch (error) {
+          // Until the expenses migration is applied, keep a local draft so the UI works.
+          const message = error instanceof Error ? error.message : String(error);
+          const tableMissing =
+            /could not find the table|schema cache|relation .*expenses/i.test(message) ||
+            /expense-receipts/i.test(message);
+          if (!tableMissing) throw error;
+        }
+      }
+
+      const expense = {
+        id: createId("exp"),
+        amount: input.amount,
+        expenseDate: input.expenseDate,
+        category: input.category,
+        description: input.description?.trim() || undefined,
+        submittedBy: currentUser.id,
+        submittedByName: currentUser.name,
+        receiptFileName: input.receipt?.name,
+        receiptPreviewUrl: input.receipt?.dataUrl,
+        createdAt: new Date().toISOString(),
+      };
+      if (liveMode) {
+        try {
+          appendLiveExpense(expense);
+        } catch {
+          // ignore
+        }
+      }
+      setState((previous) => ({
+        ...previous,
+        expenses: mergeExpenses([expense], previous.expenses),
+      }));
     }
 
     async function addOrderDocuments(orderId: string, files: File[], kind: DocumentKind) {
@@ -724,13 +1163,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       liveMode,
       currentUser,
       state,
-      login,
+      loginWithPassword,
       logout,
       refreshLive,
       createCustomer,
       createOrder,
       updateOrderBeforePacking,
+      deleteOrder,
       acceptOrder,
+      savePackingNotes,
       toggleChecklistItem,
       markReadyForDelivery,
       startDelivery,
@@ -738,6 +1179,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       completePartialDelivery,
       completeFullReturn,
       recordPayment,
+      createExpense,
       addOrderDocuments,
       searchAll,
     };
