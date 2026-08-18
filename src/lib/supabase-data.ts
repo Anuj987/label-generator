@@ -660,6 +660,34 @@ export async function updateLiveOrderStatus(
   return result.data;
 }
 
+/**
+ * Admin-only order delete.
+ * Prefers SECURITY DEFINER RPC `delete_nt_order` (role-checked server-side).
+ * Does not delete customers or payment collection rows.
+ */
+export async function deleteLiveOrder(orderId: string) {
+  if (!supabaseConfigured || !supabase) {
+    throw new Error("Supabase is not configured");
+  }
+
+  const rpc = await supabase.rpc("delete_nt_order", { p_order_id: orderId });
+  if (!rpc.error) return;
+
+  const message =
+    rpc.error && typeof rpc.error === "object" && "message" in rpc.error
+      ? String((rpc.error as { message?: string }).message || "Order delete failed")
+      : "Order delete failed";
+
+  // If the migration has not been applied yet, surface a clear admin action.
+  if (/could not find the function|schema cache|does not exist/i.test(message)) {
+    throw new Error(
+      "Order delete is not enabled in Supabase yet. Run supabase/order-permissions.sql in the SQL Editor, then try again.",
+    );
+  }
+
+  throw new Error(message);
+}
+
 export async function updateLiveOrderItemsQuantities(
   lines: Array<{ productId: string; deliveredQuantity: number; returnedQuantity: number }>,
 ) {

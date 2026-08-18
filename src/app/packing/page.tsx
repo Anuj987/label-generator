@@ -40,7 +40,7 @@ export default function PackingPage() {
       <PageHeader
         eyebrow="Packing · Somnath"
         title="Packing queue"
-        description="Accept new orders, complete the checklist, then mark Ready for Delivery."
+        description="View new orders, accept when ready, complete the checklist, then mark Ready for Delivery."
       />
 
       <div className="space-y-4">
@@ -68,7 +68,12 @@ export default function PackingPage() {
               </div>
 
               {order.status === "new" ? (
-                <Button onClick={() => acceptOrder(order.id)}>Accept order</Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => acceptOrder(order.id)}>Accept order</Button>
+                  <Link href={`/orders/${order.id}`}>
+                    <Button variant="secondary">View order</Button>
+                  </Link>
+                </div>
               ) : (
                 <div className="space-y-3">
                   <div className="space-y-2">

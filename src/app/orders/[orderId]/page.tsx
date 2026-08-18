@@ -2,6 +2,7 @@
 
 import { FormEvent, use, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAppContext } from "@/components/providers/app-provider";
 import {
   Badge,
@@ -15,7 +16,7 @@ import {
   TextArea,
 } from "@/components/ui";
 import { PRIORITY_LABELS, STATUS_LABELS, totalPurchaseCost } from "@/lib/demo-data";
-import { formatDate, formatDateTime } from "@/lib/storage";
+import { errorMessage, formatDate, formatDateTime } from "@/lib/storage";
 import type { Priority } from "@/lib/types";
 
 type ProductDraft = {
@@ -36,7 +37,8 @@ const emptyProduct = (): ProductDraft => ({
 
 export default function OrderDetailPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params);
-  const { currentUser, state, updateOrderBeforePacking } = useAppContext();
+  const { currentUser, state, updateOrderBeforePacking, deleteOrder } = useAppContext();
+  const router = useRouter();
 
   const order = state.orders.find((item) => item.id === orderId);
   const events = useMemo(
@@ -45,6 +47,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
   );
 
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [form, setForm] = useState({
     customerName: order?.customerName ?? "",
     contactPerson: order?.contactPerson ?? "",
@@ -82,6 +87,20 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
   }
 
   const canEdit = currentUser.role === "admin" && order.status === "new";
+  const canDelete = currentUser.role === "admin";
+
+  async function handleDelete() {
+    if (!order || !canDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteOrder(order.id);
+      router.push("/orders");
+    } catch (err) {
+      setDeleteError(errorMessage(err, "Failed to delete order"));
+      setDeleting(false);
+    }
+  }
 
   function startEditing() {
     if (!order) return;
@@ -513,7 +532,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         </div>
       </SectionCard>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Link href="/orders">
           <Button variant="secondary">Back to orders</Button>
         </Link>
@@ -527,7 +546,45 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
             <Button variant="secondary">Delivery queue</Button>
           </Link>
         ) : null}
+        {canDelete ? (
+          <Button
+            variant="danger"
+            onClick={() => {
+              setConfirmDelete(true);
+              setDeleteError(null);
+            }}
+          >
+            Delete order
+          </Button>
+        ) : null}
       </div>
+
+      {canDelete && confirmDelete ? (
+        <SectionCard
+          title="Confirm delete"
+          description={`Delete ${order.orderNumber} for ${order.customerName}? This cannot be undone.`}
+        >
+          <p className="mb-3 text-sm text-slate-600">
+            Status: {STATUS_LABELS[order.status]}. Customers and payment records stay intact.
+          </p>
+          {deleteError ? <p className="mb-3 text-sm text-rose-600">{deleteError}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="danger" disabled={deleting} onClick={() => void handleDelete()}>
+              {deleting ? "Deleting…" : "Yes, delete order"}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={deleting}
+              onClick={() => {
+                setConfirmDelete(false);
+                setDeleteError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </SectionCard>
+      ) : null}
     </div>
   );
 }

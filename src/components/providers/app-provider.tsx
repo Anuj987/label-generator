@@ -20,6 +20,7 @@ import {
   createLiveExpense,
   createLiveOrder,
   createLivePayment,
+  deleteLiveOrder,
   loadLiveExpensesFromDb,
   loadLiveState,
   persistChecklistCompletion,
@@ -77,6 +78,7 @@ type AppContextValue = {
   createCustomer: (input: CustomerInput) => Promise<void>;
   createOrder: (input: CreateOrderInput) => Promise<Order>;
   updateOrderBeforePacking: (orderId: string, input: CreateOrderInput) => Promise<void>;
+  deleteOrder: (orderId: string) => Promise<void>;
   acceptOrder: (orderId: string) => Promise<void>;
   toggleChecklistItem: (orderId: string, itemId: string) => void;
   markReadyForDelivery: (orderId: string) => Promise<void>;
@@ -458,8 +460,67 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    async function deleteOrder(orderId: string) {
+      if (!currentUser || currentUser.role !== "admin") {
+        throw new Error("Only admin can delete orders");
+      }
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing) throw new Error("Order not found");
+
+      if (liveMode) {
+        await deleteLiveOrder(orderId);
+        const event: AuditEvent = {
+          id: createId("evt"),
+          orderId,
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: "order_deleted",
+          detail: `${currentUser.name} deleted ${existing.orderNumber} · ${existing.customerName}`,
+          emoji: "🗑️",
+          createdAt: new Date().toISOString(),
+        };
+        rememberLiveEvent(event);
+        void recordLiveAuditLog({
+          orderId,
+          userId: currentUser.id,
+          action: "order_deleted",
+          description: event.detail,
+        });
+        setState((previous) => ({
+          ...previous,
+          orders: previous.orders.filter((order) => order.id !== orderId),
+          auditEvents: mergeAuditEvents([event], previous.auditEvents),
+        }));
+        try {
+          await refreshLive();
+        } catch {
+          // ignore refresh failures after delete
+        }
+        return;
+      }
+
+      setState((previous) =>
+        pushEvent(
+          {
+            ...previous,
+            orders: previous.orders.filter((order) => order.id !== orderId),
+          },
+          {
+            orderId,
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: "order_deleted",
+            detail: `${currentUser.name} deleted ${existing.orderNumber} · ${existing.customerName}`,
+            emoji: "🗑️",
+          },
+        ),
+      );
+    }
+
     async function acceptOrder(orderId: string) {
       if (!currentUser || currentUser.role !== "packing") return;
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "new") return;
       const now = new Date().toISOString();
       if (liveMode) {
         await updateLiveOrderStatus(orderId, "packing", { packing_started_at: now });
@@ -564,6 +625,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function startDelivery(orderId: string) {
       if (!currentUser || currentUser.role !== "delivery") return;
+      const existing = state.orders.find((order) => order.id === orderId);
+      if (!existing || existing.status !== "ready") return;
       const now = new Date().toISOString();
       if (liveMode) {
         await updateLiveOrderStatus(orderId, "out_for_delivery", { delivery_started_at: now });
@@ -1029,6 +1092,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createCustomer,
       createOrder,
       updateOrderBeforePacking,
+      deleteOrder,
       acceptOrder,
       toggleChecklistItem,
       markReadyForDelivery,
