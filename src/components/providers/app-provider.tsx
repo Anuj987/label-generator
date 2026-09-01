@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
@@ -101,11 +102,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [state, setState] = useState<AppState>(() => loadState());
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const refreshQueuedRef = useRef(false);
 
   const refreshLive = useCallback(async () => {
     if (!liveMode) return;
-    const live = await loadLiveState();
-    setState(live);
+    if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
+      await refreshInFlightRef.current;
+      return;
+    }
+
+    do {
+      refreshQueuedRef.current = false;
+      const request = loadLiveState().then((live) => setState(live));
+      refreshInFlightRef.current = request;
+      try {
+        await request;
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    } while (refreshQueuedRef.current);
   }, [liveMode]);
 
   useEffect(() => {
@@ -148,9 +165,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!liveMode || !ready) return;
-    return subscribeLiveChanges(() => {
-      void refreshLive();
+    let refreshTimer: number | undefined;
+    const unsubscribe = subscribeLiveChanges(() => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => void refreshLive(), 150);
     });
+    return () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      unsubscribe();
+    };
   }, [liveMode, ready, refreshLive]);
 
   const value = useMemo<AppContextValue>(() => {

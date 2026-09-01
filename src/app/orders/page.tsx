@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAppContext } from "@/components/providers/app-provider";
 import {
@@ -37,6 +37,7 @@ export default function OrdersPage() {
   const router = useRouter();
   const { createOrder, currentUser, state } = useAppContext();
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [customerMenuOpen, setCustomerMenuOpen] = useState(false);
   const customerFieldRef = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState({
@@ -57,7 +58,7 @@ export default function OrdersPage() {
   const [products, setProducts] = useState<ProductDraft[]>([emptyProduct()]);
 
   const filtered = useMemo(() => {
-    const search = query.trim().toLowerCase();
+    const search = deferredQuery.trim().toLowerCase();
     const list = sortOrdersByDelivery(state.orders);
     if (!search) return list;
     return list.filter(
@@ -67,7 +68,7 @@ export default function OrdersPage() {
         order.customerName.toLowerCase().includes(search) ||
         order.mobile.includes(search),
     );
-  }, [query, state.orders]);
+  }, [deferredQuery, state.orders]);
 
   const suggestions = useMemo(() => {
     const search = form.customerName.trim().toLowerCase();

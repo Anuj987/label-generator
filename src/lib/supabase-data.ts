@@ -45,6 +45,15 @@ const STATUS_FROM_DB: Record<string, OrderStatus> = {
   RETURNED: "full_return",
 };
 
+const CUSTOMER_COLUMNS =
+  "id,customer_name,contact_person,phone,address,gst_number,created_at";
+const ORDER_COLUMNS =
+  "id,order_number,invoice_number,invoice_date,customer_id,delivery_date,status,remarks,created_by,created_at,priority,delivery_instructions,packing_started_at,packing_completed_at,delivery_started_at,delivery_completed_at,return_reason";
+const ORDER_ITEM_COLUMNS =
+  "id,order_id,product_id,ordered_qty,rate,product_name,unit";
+const PAYMENT_COLUMNS =
+  "id,customer_id,invoice_number,invoice_date,amount,payment_mode,notes,received_by,created_at";
+
 /** Known staff rows in public.users */
 export const SUPABASE_USERS: UserProfile[] = [
   { id: "b6b98dbb-37c9-4c7d-a267-3b0a9461996f", name: "Anuj", role: "admin" },
@@ -198,7 +207,9 @@ export function nextLiveOrderNumber(existing: Order[]) {
   return `NT/${fy}/${String(max + 1).padStart(3, "0")}`;
 }
 
-export async function loadLiveState(): Promise<AppState> {
+let liveStateRequest: Promise<AppState> | null = null;
+
+async function fetchLiveState(): Promise<AppState> {
   if (!supabaseConfigured || !supabase) {
     throw new Error("Supabase is not configured");
   }
@@ -206,10 +217,21 @@ export async function loadLiveState(): Promise<AppState> {
   const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
 
   const [customersRes, ordersRes, itemsRes, paymentsRes] = await Promise.all([
-    supabase.from("customers").select("*").order("created_at", { ascending: false }),
-    supabase.from("orders").select("*, customers(*)").order("created_at", { ascending: false }),
-    supabase.from("order_items").select("*"),
-    supabase.from("payments").select("*").order("created_at", { ascending: false }),
+    supabase
+      .from("customers")
+      .select(CUSTOMER_COLUMNS)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("orders")
+      .select(ORDER_COLUMNS)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("order_items")
+      .select(ORDER_ITEM_COLUMNS),
+    supabase
+      .from("payments")
+      .select(PAYMENT_COLUMNS)
+      .order("created_at", { ascending: false }),
   ]);
 
   if (customersRes.error) throw customersRes.error;
@@ -228,12 +250,15 @@ export async function loadLiveState(): Promise<AppState> {
     itemsByOrder.set(orderId, list);
   }
 
+  const customerById = new Map(
+    (customersRes.data ?? []).map((row) => [String(row.id), row as Record<string, unknown>]),
+  );
   const customerNameById = new Map(customers.map((customer) => [customer.id, customer.name]));
   const orders = (ordersRes.data ?? []).map((row) => {
-    const record = row as Record<string, unknown> & { customers?: Record<string, unknown> | null };
+    const record = row as Record<string, unknown>;
     return mapOrder(
       record,
-      record.customers ?? null,
+      customerById.get(String(record.customer_id)) ?? null,
       itemsByOrder.get(String(record.id)) ?? [],
       usersById,
     );
@@ -254,6 +279,16 @@ export async function loadLiveState(): Promise<AppState> {
   };
 }
 
+/** Coalesces concurrent initial/realtime loads without caching settled data. */
+export function loadLiveState(): Promise<AppState> {
+  if (!liveStateRequest) {
+    liveStateRequest = fetchLiveState().finally(() => {
+      liveStateRequest = null;
+    });
+  }
+  return liveStateRequest;
+}
+
 async function findOrCreateCustomer(input: {
   name: string;
   contactPerson: string;
@@ -265,7 +300,7 @@ async function findOrCreateCustomer(input: {
   const name = input.name.trim();
   const existing = await supabase
     .from("customers")
-    .select("*")
+    .select(CUSTOMER_COLUMNS)
     .ilike("customer_name", name)
     .limit(1)
     .maybeSingle();
@@ -281,7 +316,7 @@ async function findOrCreateCustomer(input: {
       address: input.address.trim() || "",
       gst_number: input.gst?.trim() || null,
     })
-    .select("*")
+    .select(CUSTOMER_COLUMNS)
     .single();
 
   if (inserted.error || !inserted.data) {
@@ -301,7 +336,7 @@ export async function createLiveCustomer(input: CustomerInput) {
       address: "",
       gst_number: input.gst?.trim() || null,
     })
-    .select("*")
+    .select(CUSTOMER_COLUMNS)
     .single();
   if (inserted.error || !inserted.data) throw inserted.error ?? new Error("Customer create failed");
   return mapCustomer(inserted.data as Record<string, unknown>);
@@ -336,7 +371,7 @@ export async function createLiveOrder(
       remarks: input.notes || null,
       created_by: actor.id,
     })
-    .select("*")
+    .select(ORDER_COLUMNS)
     .single();
 
   if (inserted.error || !inserted.data) {
@@ -359,11 +394,11 @@ export async function createLiveOrder(
     }));
 
   if (itemRows.length) {
-    const itemsInsert = await supabase.from("order_items").insert(itemRows).select("*");
+    const itemsInsert = await supabase.from("order_items").insert(itemRows);
     if (itemsInsert.error) throw itemsInsert.error;
   }
 
-  const items = await supabase.from("order_items").select("*").eq("order_id", orderId);
+  const items = await supabase.from("order_items").select(ORDER_ITEM_COLUMNS).eq("order_id", orderId);
   return mapOrder(
     inserted.data as Record<string, unknown>,
     {
@@ -401,7 +436,7 @@ export async function updateLiveOrderBeforePacking(orderId: string, input: Creat
     })
     .eq("id", orderId)
     .eq("status", "NEW")
-    .select("*")
+    .select("id")
     .single();
 
   if (updated.error) throw updated.error;
@@ -436,7 +471,7 @@ export async function updateLiveOrderStatus(
     status: STATUS_TO_DB[status],
     ...patch,
   };
-  const result = await supabase.from("orders").update(payload).eq("id", orderId).select("*").single();
+  const result = await supabase.from("orders").update(payload).eq("id", orderId).select("id").single();
   if (result.error) throw result.error;
   return result.data;
 }
@@ -478,7 +513,7 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
       notes: input.notes || null,
       received_by: actor.id,
     })
-    .select("*")
+    .select(PAYMENT_COLUMNS)
     .single();
 
   if (inserted.error || !inserted.data) {

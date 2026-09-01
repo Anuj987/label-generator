@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useDeferredValue, useMemo, useState } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import {
   Button,
@@ -17,6 +17,7 @@ import type { DocumentKind, PaymentMode } from "@/lib/types";
 export default function PaymentsPage() {
   const { currentUser, recordPayment, state } = useAppContext();
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [form, setForm] = useState({
     customerName: "",
     invoiceNumber: "",
@@ -29,7 +30,7 @@ export default function PaymentsPage() {
   const [files, setFiles] = useState<FileList | null>(null);
 
   const filtered = useMemo(() => {
-    const search = query.trim().toLowerCase();
+    const search = deferredQuery.trim().toLowerCase();
     return state.payments.filter((payment) => {
       if (!search) return true;
       return (
@@ -37,7 +38,7 @@ export default function PaymentsPage() {
         payment.customerName.toLowerCase().includes(search)
       );
     });
-  }, [query, state.payments]);
+  }, [deferredQuery, state.payments]);
 
   if (!currentUser) return null;
 

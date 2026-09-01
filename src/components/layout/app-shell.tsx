@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutDashboard,
   LogOut,
@@ -45,6 +45,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { currentUser, logout, ready, searchAll } = useAppContext();
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -100,7 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (pathname === "/login") return <>{children}</>;
   if (!currentUser) return null;
 
-  const results = query.trim().length > 1 ? searchAll(query) : null;
+  const results = deferredQuery.trim().length > 1 ? searchAll(deferredQuery) : null;
   const showResults = searchOpen && results !== null;
 
   return (

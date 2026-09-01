@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useDeferredValue, useState } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Badge, EmptyState, Input, PageHeader, SectionCard } from "@/components/ui";
 import { STATUS_LABELS } from "@/lib/demo-data";
@@ -10,9 +10,10 @@ import { formatCurrency } from "@/lib/storage";
 export default function SearchPage() {
   const { currentUser, searchAll } = useAppContext();
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const results =
-    query.trim().length > 1
-      ? searchAll(query)
+    deferredQuery.trim().length > 1
+      ? searchAll(deferredQuery)
       : { customers: [], orders: [], payments: [] };
 
   if (!currentUser) return null;

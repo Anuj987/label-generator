@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useDeferredValue, useMemo, useState } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import {
   Button,
@@ -14,6 +14,7 @@ import {
 export default function CustomersPage() {
   const { createCustomer, currentUser, state } = useAppContext();
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [form, setForm] = useState({
     name: "",
     mobile: "",
@@ -22,7 +23,7 @@ export default function CustomersPage() {
   });
 
   const filtered = useMemo(() => {
-    const search = query.toLowerCase().trim();
+    const search = deferredQuery.toLowerCase().trim();
     const list = [...state.customers].sort((a, b) => a.name.localeCompare(b.name));
     if (!search) return list;
     return list.filter(
@@ -31,7 +32,7 @@ export default function CustomersPage() {
         (customer.mobile ?? "").includes(search) ||
         (customer.gst ?? "").toLowerCase().includes(search),
     );
-  }, [query, state.customers]);
+  }, [deferredQuery, state.customers]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

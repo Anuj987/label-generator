@@ -12,7 +12,7 @@ import {
   SectionCard,
   TextArea,
 } from "@/components/ui";
-import { PRIORITY_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
+import { PRIORITY_LABELS, sortOrdersByDelivery, STATUS_LABELS, totalQuantity } from "@/lib/demo-data";
 import { formatDate } from "@/lib/storage";
 import type { PartialDeliveryLine } from "@/lib/types";
 
@@ -29,12 +29,7 @@ export default function DeliveryPage() {
   } = useAppContext();
 
   const queue = useMemo(
-    () =>
-      sortOrdersByDelivery(
-        state.orders.filter(
-          (order) => order.status === "ready" || order.status === "out_for_delivery",
-        ),
-      ),
+    () => sortOrdersByDelivery(state.orders),
     [state.orders],
   );
 
@@ -116,7 +111,7 @@ export default function DeliveryPage() {
                 <p>
                   Products: {order.products.length} · Total qty: {totalQuantity(order.products)}
                 </p>
-                <p>Status: {order.status === "ready" ? "Ready" : "Out for Delivery"}</p>
+                <p>Status: {STATUS_LABELS[order.status]}</p>
               </div>
 
               {order.status === "ready" ? (
@@ -126,7 +121,7 @@ export default function DeliveryPage() {
                     <Button variant="secondary">View order</Button>
                   </Link>
                 </div>
-              ) : (
+              ) : order.status === "out_for_delivery" ? (
                 <div className="space-y-3">
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={() => openOutcome(order.id, "delivered")}>Delivered</Button>
@@ -262,6 +257,10 @@ export default function DeliveryPage() {
                     </div>
                   ) : null}
                 </div>
+              ) : (
+                <Link href={`/orders/${order.id}`}>
+                  <Button variant="secondary">View order</Button>
+                </Link>
               )}
             </SectionCard>
           );
@@ -270,7 +269,7 @@ export default function DeliveryPage() {
         {!queue.length ? (
           <EmptyState
             title="No delivery work right now"
-            description="Ready and out-for-delivery orders appear here."
+            description="Orders appear here as soon as they are created."
           />
         ) : null}
       </div>
