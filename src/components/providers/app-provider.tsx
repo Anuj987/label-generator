@@ -80,6 +80,20 @@ type AppContextValue = {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+function withoutOrderPrices(state: AppState): AppState {
+  return {
+    ...state,
+    orders: state.orders.map((order) => ({
+      ...order,
+      products: order.products.map((product) => ({
+        ...product,
+        purchasePrice: undefined,
+        sellingPrice: undefined,
+      })),
+    })),
+  };
+}
+
 function pushEvent(
   state: AppState,
   event: Omit<AppState["auditEvents"][number], "id" | "createdAt"> & { createdAt?: string },
@@ -115,7 +129,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     do {
       refreshQueuedRef.current = false;
-      const request = loadLiveState().then((live) => setState(live));
+      const request = loadLiveState(currentUser?.role).then((live) => setState(live));
       refreshInFlightRef.current = request;
       try {
         await request;
@@ -123,7 +137,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         refreshInFlightRef.current = null;
       }
     } while (refreshQueuedRef.current);
-  }, [liveMode]);
+  }, [currentUser?.role, liveMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       try {
         if (liveMode) {
-          const live = await loadLiveState();
+          const live = await loadLiveState(user?.role);
           if (!cancelled) setState(live);
         } else if (!cancelled) {
           setState(loadState());
@@ -183,11 +197,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : SUPABASE_USERS.find((item) => item.role === role) ?? null;
       setRoleCookie(role);
       setCurrentUser(user);
+      if (liveMode) {
+        if (role !== "admin") setState((previous) => withoutOrderPrices(previous));
+        void loadLiveState(role)
+          .then((live) => setState(live))
+          .catch((error) => console.error("Failed to load role-scoped Supabase data", error));
+      }
     }
 
     function logout() {
       setRoleCookie(null);
       setCurrentUser(null);
+      if (liveMode) setState((previous) => withoutOrderPrices(previous));
     }
 
     async function createCustomer(input: CustomerInput) {

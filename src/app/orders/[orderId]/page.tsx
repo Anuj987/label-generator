@@ -13,7 +13,12 @@ import {
   Select,
   TextArea,
 } from "@/components/ui";
-import { PRIORITY_LABELS, STATUS_LABELS, totalPurchaseCost } from "@/lib/demo-data";
+import {
+  PRIORITY_LABELS,
+  STATUS_LABELS,
+  totalPurchaseCost,
+  totalSellingValue,
+} from "@/lib/demo-data";
 import { formatDate, formatDateTime } from "@/lib/storage";
 import type { Priority } from "@/lib/types";
 
@@ -50,6 +55,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         product.purchasePrice !== undefined && product.purchasePrice !== null
           ? String(product.purchasePrice)
           : "",
+      sellingPrice:
+        product.sellingPrice !== undefined && product.sellingPrice !== null
+          ? String(product.sellingPrice)
+          : "",
     })) ?? [],
   );
 
@@ -80,6 +89,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
         description: product.description.trim() || undefined,
         purchasePrice: product.purchasePrice.trim()
           ? Number(product.purchasePrice)
+          : undefined,
+        sellingPrice: product.sellingPrice.trim()
+          ? Number(product.sellingPrice)
           : undefined,
       })),
     });
@@ -223,9 +235,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                       }
                     />
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid gap-2 sm:grid-cols-3">
                     <Input
-                      label="Purchase price"
+                      label="Purchase Price"
                       type="number"
                       min="0"
                       step="0.01"
@@ -235,6 +247,22 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                           previous.map((item, itemIndex) =>
                             itemIndex === index
                               ? { ...item, purchasePrice: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                    <Input
+                      label="Selling Price (optional)"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={product.sellingPrice}
+                      onChange={(event) =>
+                        setProducts((previous) =>
+                          previous.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, sellingPrice: event.target.value }
                               : item,
                           ),
                         )
@@ -331,13 +359,27 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                     Purchase ₹{product.purchasePrice.toLocaleString("en-IN")} / {product.unit}
                   </p>
                 ) : null}
+                {currentUser.role === "admin" && product.sellingPrice !== undefined ? (
+                  <p className="mt-1 text-xs text-teal-800">
+                    Selling ₹{product.sellingPrice.toLocaleString("en-IN")} / {product.unit} · Total ₹
+                    {(product.sellingPrice * product.quantity).toLocaleString("en-IN")}
+                  </p>
+                ) : null}
               </div>
             ))}
             {currentUser.role === "admin" ? (
-              <p className="pt-2 text-sm font-medium text-slate-800">
-                Total purchase cost: ₹
-                {totalPurchaseCost(order.products).toLocaleString("en-IN")}
-              </p>
+              <div className="space-y-1 pt-2 text-sm font-medium text-slate-800">
+                <p>
+                  Total purchase cost: ₹
+                  {totalPurchaseCost(order.products).toLocaleString("en-IN")}
+                </p>
+                {order.products.some((product) => product.sellingPrice !== undefined) ? (
+                  <p>
+                    Total selling value: ₹
+                    {totalSellingValue(order.products).toLocaleString("en-IN")}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </SectionCard>

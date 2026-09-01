@@ -74,6 +74,13 @@ export function totalPurchaseCost(products: OrderProduct[]) {
   );
 }
 
+export function totalSellingValue(products: OrderProduct[]) {
+  return products.reduce(
+    (sum, product) => sum + (product.sellingPrice ?? 0) * product.quantity,
+    0,
+  );
+}
+
 export function todayDateString(day = new Date()) {
   const year = day.getFullYear();
   const month = String(day.getMonth() + 1).padStart(2, "0");

@@ -23,6 +23,7 @@ type ProductDraft = {
   unit: string;
   description: string;
   purchasePrice: string;
+  sellingPrice: string;
 };
 
 const emptyProduct = (): ProductDraft => ({
@@ -31,6 +32,7 @@ const emptyProduct = (): ProductDraft => ({
   unit: "kg",
   description: "",
   purchasePrice: "",
+  sellingPrice: "",
 });
 
 export default function OrdersPage() {
@@ -128,6 +130,9 @@ export default function OrdersPage() {
           purchasePrice: product.purchasePrice.trim()
             ? Number(product.purchasePrice)
             : undefined,
+          sellingPrice: product.sellingPrice.trim()
+            ? Number(product.sellingPrice)
+            : undefined,
         })),
     });
 
@@ -222,8 +227,7 @@ export default function OrdersPage() {
               }
             />
             <Input
-              label="Mobile"
-              required
+              label="Mobile (optional)"
               value={form.mobile}
               onChange={(event) =>
                 setForm((previous) => ({ ...previous, mobile: event.target.value }))
@@ -232,8 +236,7 @@ export default function OrdersPage() {
           </div>
 
           <TextArea
-            label="Address"
-            required
+            label="Address (optional)"
             rows={3}
             value={form.address}
             onChange={(event) =>
@@ -249,8 +252,7 @@ export default function OrdersPage() {
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Input
-              label="Invoice number"
-              required
+              label="Invoice number (optional)"
               value={form.invoiceNumber}
               onChange={(event) =>
                 setForm((previous) => ({ ...previous, invoiceNumber: event.target.value }))
@@ -358,9 +360,9 @@ export default function OrdersPage() {
                     }
                   />
                 </div>
-                <div className="grid gap-3 lg:grid-cols-2">
+                <div className="grid gap-3 lg:grid-cols-3">
                   <Input
-                    label="Purchase price (admin)"
+                    label="Purchase Price"
                     type="number"
                     min="0"
                     step="0.01"
@@ -370,6 +372,23 @@ export default function OrdersPage() {
                         previous.map((item, itemIndex) =>
                           itemIndex === index
                             ? { ...item, purchasePrice: event.target.value }
+                            : item,
+                        ),
+                      )
+                    }
+                    placeholder="₹ per unit"
+                  />
+                  <Input
+                    label="Selling Price (optional)"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={product.sellingPrice}
+                    onChange={(event) =>
+                      setProducts((previous) =>
+                        previous.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? { ...item, sellingPrice: event.target.value }
                             : item,
                         ),
                       )

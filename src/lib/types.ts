@@ -49,6 +49,8 @@ export type OrderProduct = {
   description?: string;
   /** Admin-only purchase cost. Hidden from packing and delivery. */
   purchasePrice?: number;
+  /** Admin-only selling price per unit. Hidden from packing and delivery. */
+  sellingPrice?: number;
   productMasterId?: string;
 };
 
@@ -162,6 +164,7 @@ export type OrderProductInput = {
   unit: string;
   description?: string;
   purchasePrice?: number;
+  sellingPrice?: number;
 };
 
 export type CreateOrderInput = {

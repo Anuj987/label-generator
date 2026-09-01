@@ -49,8 +49,9 @@ const CUSTOMER_COLUMNS =
   "id,customer_name,contact_person,phone,address,gst_number,created_at";
 const ORDER_COLUMNS =
   "id,order_number,invoice_number,invoice_date,customer_id,delivery_date,status,remarks,created_by,created_at,priority,delivery_instructions,packing_started_at,packing_completed_at,delivery_started_at,delivery_completed_at,return_reason";
-const ORDER_ITEM_COLUMNS =
-  "id,order_id,product_id,ordered_qty,rate,product_name,unit";
+const ORDER_ITEM_BASE_COLUMNS = "id,order_id,product_id,ordered_qty,product_name,unit";
+const ORDER_ITEM_ADMIN_COLUMNS =
+  "id,order_id,product_id,ordered_qty,product_name,unit,rate,selling_price";
 const PAYMENT_COLUMNS =
   "id,customer_id,invoice_number,invoice_date,amount,payment_mode,notes,received_by,created_at";
 
@@ -126,6 +127,10 @@ function mapItem(row: Record<string, unknown>): OrderProduct {
     quantity: Number(row.ordered_qty ?? 0),
     unit: String(row.unit ?? "kg"),
     purchasePrice: row.rate === null || row.rate === undefined ? undefined : Number(row.rate),
+    sellingPrice:
+      row.selling_price === null || row.selling_price === undefined
+        ? undefined
+        : Number(row.selling_price),
     productMasterId: row.product_id ? String(row.product_id) : undefined,
   };
 }
@@ -207,14 +212,18 @@ export function nextLiveOrderNumber(existing: Order[]) {
   return `NT/${fy}/${String(max + 1).padStart(3, "0")}`;
 }
 
-let liveStateRequest: Promise<AppState> | null = null;
+const liveStateRequests = new Map<string, Promise<AppState>>();
 
-async function fetchLiveState(): Promise<AppState> {
+async function fetchLiveState(role?: Role): Promise<AppState> {
   if (!supabaseConfigured || !supabase) {
     throw new Error("Supabase is not configured");
   }
 
   const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
+  const orderItemsQuery =
+    role === "admin"
+      ? supabase.from("order_items").select(ORDER_ITEM_ADMIN_COLUMNS)
+      : supabase.from("order_items").select(ORDER_ITEM_BASE_COLUMNS);
 
   const [customersRes, ordersRes, itemsRes, paymentsRes] = await Promise.all([
     supabase
@@ -225,9 +234,7 @@ async function fetchLiveState(): Promise<AppState> {
       .from("orders")
       .select(ORDER_COLUMNS)
       .order("created_at", { ascending: false }),
-    supabase
-      .from("order_items")
-      .select(ORDER_ITEM_COLUMNS),
+    orderItemsQuery,
     supabase
       .from("payments")
       .select(PAYMENT_COLUMNS)
@@ -280,13 +287,16 @@ async function fetchLiveState(): Promise<AppState> {
 }
 
 /** Coalesces concurrent initial/realtime loads without caching settled data. */
-export function loadLiveState(): Promise<AppState> {
-  if (!liveStateRequest) {
-    liveStateRequest = fetchLiveState().finally(() => {
-      liveStateRequest = null;
-    });
-  }
-  return liveStateRequest;
+export function loadLiveState(role?: Role): Promise<AppState> {
+  const requestKey = role ?? "signed-out";
+  const existing = liveStateRequests.get(requestKey);
+  if (existing) return existing;
+
+  const request = fetchLiveState(role).finally(() => {
+    liveStateRequests.delete(requestKey);
+  });
+  liveStateRequests.set(requestKey, request);
+  return request;
 }
 
 async function findOrCreateCustomer(input: {
@@ -389,6 +399,7 @@ export async function createLiveOrder(
       rate: product.purchasePrice ?? null,
       amount:
         product.purchasePrice !== undefined ? product.purchasePrice * product.quantity : null,
+      selling_price: product.sellingPrice ?? null,
       delivered_qty: 0,
       returned_qty: 0,
     }));
@@ -398,7 +409,10 @@ export async function createLiveOrder(
     if (itemsInsert.error) throw itemsInsert.error;
   }
 
-  const items = await supabase.from("order_items").select(ORDER_ITEM_COLUMNS).eq("order_id", orderId);
+  const items = await supabase
+    .from("order_items")
+    .select(ORDER_ITEM_ADMIN_COLUMNS)
+    .eq("order_id", orderId);
   return mapOrder(
     inserted.data as Record<string, unknown>,
     {
@@ -452,6 +466,7 @@ export async function updateLiveOrderBeforePacking(orderId: string, input: Creat
       rate: product.purchasePrice ?? null,
       amount:
         product.purchasePrice !== undefined ? product.purchasePrice * product.quantity : null,
+      selling_price: product.sellingPrice ?? null,
       delivered_qty: 0,
       returned_qty: 0,
     }));
