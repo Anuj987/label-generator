@@ -3,15 +3,8 @@ import type {
   OrderProduct,
   PackingChecklistItem,
   Role,
-  UserProfile,
 } from "@/lib/types";
 import { SEED_CUSTOMERS } from "@/lib/seed-customers";
-
-export const DEMO_USERS: UserProfile[] = [
-  { id: "user-admin", name: "Anuj", role: "admin" },
-  { id: "user-packing", name: "Somnath", role: "packing" },
-  { id: "user-delivery", name: "Mayur", role: "delivery" },
-];
 
 export const ROLE_LABELS: Record<Role, string> = {
   admin: "Admin",

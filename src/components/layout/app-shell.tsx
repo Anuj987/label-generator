@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Button, Input } from "@/components/ui";
+import { ROLE_HOME, roleCanAccessPath } from "@/lib/access";
 import { ROLE_LABELS } from "@/lib/demo-data";
 import type { Role } from "@/lib/types";
 
@@ -53,6 +54,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (!ready) return;
     if (!currentUser && pathname !== "/login") {
       router.replace("/login");
+    } else if (
+      currentUser &&
+      pathname !== "/login" &&
+      !roleCanAccessPath(currentUser.role, pathname)
+    ) {
+      router.replace(ROLE_HOME[currentUser.role]);
     }
   }, [currentUser, pathname, ready, router]);
 
@@ -119,7 +126,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               <p className="text-sm font-semibold text-slate-900">{currentUser.name}</p>
               <p className="text-xs text-slate-500">{ROLE_LABELS[currentUser.role]}</p>
             </div>
-            <Button variant="secondary" onClick={() => { logout(); router.push("/login"); }}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void logout().finally(() => router.replace("/login"));
+              }}
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Logout
             </Button>

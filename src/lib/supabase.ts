@@ -1,16 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
+import { supabaseConfigured, supabaseKey, supabaseUrl } from "@/lib/supabase/config";
 
-const url =
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://bwpmuknevcoshtufaytk.supabase.co";
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-export const supabaseConfigured = Boolean(url && anonKey);
+export { supabaseConfigured } from "@/lib/supabase/config";
 
 export const supabase = supabaseConfigured
-  ? createClient(url, anonKey!, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    })
+  ? createBrowserClient(supabaseUrl, supabaseKey)
   : null;

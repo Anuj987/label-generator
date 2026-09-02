@@ -11,27 +11,19 @@ import {
   useState,
 } from "react";
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
+import { clearLegacyRoleState, fileToDataUrl, minutesBetween } from "@/lib/storage";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 import {
-  fileToDataUrl,
-  getRoleCookie,
-  loadState,
-  minutesBetween,
-  saveState,
-  setRoleCookie,
-} from "@/lib/storage";
-import { supabaseConfigured } from "@/lib/supabase";
-import {
-  SUPABASE_USERS,
   createLiveCustomer,
   createLiveOrder,
   createLivePayment,
+  loadAuthenticatedProfile,
   loadLiveState,
   persistChecklistCompletion,
   subscribeLiveChanges,
   updateLiveOrderBeforePacking,
   updateLiveOrderItemsQuantities,
   updateLiveOrderStatus,
-  userForRole,
 } from "@/lib/supabase-data";
 import type {
   AppState,
@@ -41,7 +33,6 @@ import type {
   Order,
   PartialDeliveryLine,
   PaymentInput,
-  Role,
   UploadedFile,
   UserProfile,
 } from "@/lib/types";
@@ -51,8 +42,8 @@ type AppContextValue = {
   liveMode: boolean;
   currentUser: UserProfile | null;
   state: AppState;
-  login: (role: Role) => void;
-  logout: () => void;
+  login: (identifier: string, password: string) => Promise<UserProfile>;
+  logout: () => Promise<void>;
   refreshLive: () => Promise<void>;
   createCustomer: (input: CustomerInput) => Promise<void>;
   createOrder: (input: CreateOrderInput) => Promise<Order>;
@@ -80,19 +71,13 @@ type AppContextValue = {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
-function withoutOrderPrices(state: AppState): AppState {
-  return {
-    ...state,
-    orders: state.orders.map((order) => ({
-      ...order,
-      products: order.products.map((product) => ({
-        ...product,
-        purchasePrice: undefined,
-        sellingPrice: undefined,
-      })),
-    })),
-  };
-}
+const EMPTY_STATE: AppState = {
+  customers: [],
+  orders: [],
+  payments: [],
+  auditEvents: [],
+  nextOrderSequence: 1,
+};
 
 function pushEvent(
   state: AppState,
@@ -115,12 +100,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const liveMode = supabaseConfigured;
   const [ready, setReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [state, setState] = useState<AppState>(() => loadState());
+  const [state, setState] = useState<AppState>(EMPTY_STATE);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const refreshQueuedRef = useRef(false);
 
   const refreshLive = useCallback(async () => {
-    if (!liveMode) return;
+    if (!liveMode || !currentUser) return;
     if (refreshInFlightRef.current) {
       refreshQueuedRef.current = true;
       await refreshInFlightRef.current;
@@ -129,7 +114,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     do {
       refreshQueuedRef.current = false;
-      const request = loadLiveState(currentUser?.role).then((live) => setState(live));
+      const request = loadLiveState(currentUser.role).then((live) => setState(live));
       refreshInFlightRef.current = request;
       try {
         await request;
@@ -137,30 +122,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         refreshInFlightRef.current = null;
       }
     } while (refreshQueuedRef.current);
-  }, [currentUser?.role, liveMode]);
+  }, [currentUser, liveMode]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function boot() {
-      const role = getRoleCookie();
-      const user = role
-        ? liveMode
-          ? userForRole(role)
-          : SUPABASE_USERS.find((item) => item.role === role) ?? null
-        : null;
-      if (!cancelled) setCurrentUser(user);
-
       try {
-        if (liveMode) {
-          const live = await loadLiveState(user?.role);
-          if (!cancelled) setState(live);
-        } else if (!cancelled) {
-          setState(loadState());
-        }
+        clearLegacyRoleState();
+        if (!supabase) return;
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data.user) return;
+
+        const profile = await loadAuthenticatedProfile(data.user.id);
+        if (!profile) return;
+        const live = await loadLiveState(profile.role);
+        if (cancelled) return;
+        setCurrentUser(profile);
+        setState(live);
       } catch (error) {
-        console.error("Failed to load live Supabase data", error);
-        if (!cancelled) setState(loadState());
+        console.error("Failed to initialize authenticated application session", error);
       } finally {
         if (!cancelled) setReady(true);
       }
@@ -171,11 +152,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [liveMode]);
-
-  useEffect(() => {
-    if (!ready || liveMode) return;
-    saveState(state);
-  }, [ready, state, liveMode]);
 
   useEffect(() => {
     if (!liveMode || !ready) return;
@@ -191,24 +167,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [liveMode, ready, refreshLive]);
 
   const value = useMemo<AppContextValue>(() => {
-    function login(role: Role) {
-      const user = liveMode
-        ? userForRole(role)
-        : SUPABASE_USERS.find((item) => item.role === role) ?? null;
-      setRoleCookie(role);
-      setCurrentUser(user);
-      if (liveMode) {
-        if (role !== "admin") setState((previous) => withoutOrderPrices(previous));
-        void loadLiveState(role)
-          .then((live) => setState(live))
-          .catch((error) => console.error("Failed to load role-scoped Supabase data", error));
+    async function login(identifier: string, password: string) {
+      if (!supabase) throw new Error("Supabase authentication is not configured");
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: identifier.trim(),
+        password,
+      });
+      if (error || !data.user) throw new Error("Invalid email or password");
+
+      const profile = await loadAuthenticatedProfile(data.user.id);
+      if (!profile) {
+        await supabase.auth.signOut();
+        setCurrentUser(null);
+        setState(EMPTY_STATE);
+        throw new Error("This account is not authorized for the Operations Console");
       }
+
+      const live = await loadLiveState(profile.role);
+      setCurrentUser(profile);
+      setState(live);
+      return profile;
     }
 
-    function logout() {
-      setRoleCookie(null);
+    async function logout() {
+      clearLegacyRoleState();
+      if (supabase) await supabase.auth.signOut();
       setCurrentUser(null);
-      if (liveMode) setState((previous) => withoutOrderPrices(previous));
+      setState(EMPTY_STATE);
     }
 
     async function createCustomer(input: CustomerInput) {

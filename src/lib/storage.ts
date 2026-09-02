@@ -1,62 +1,14 @@
-import type { AppState, Role } from "@/lib/types";
-import { createInitialState } from "@/lib/demo-data";
-
-const STORAGE_KEY = "nt-operations-console-v4";
 const ROLE_COOKIE = "nt_role";
 
-export function loadState(): AppState {
-  if (typeof window === "undefined") return createInitialState();
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createInitialState();
-    return JSON.parse(raw) as AppState;
-  } catch {
-    return createInitialState();
-  }
-}
-
-export function saveState(state: AppState) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-export function getRoleCookie(): Role | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(?:^|; )nt_role=([^;]*)/);
-  const fromCookie = match?.[1];
-  if (fromCookie === "admin" || fromCookie === "packing" || fromCookie === "delivery") {
-    return fromCookie;
-  }
-  try {
-    const fromStorage = window.localStorage.getItem(ROLE_COOKIE);
-    if (fromStorage === "admin" || fromStorage === "packing" || fromStorage === "delivery") {
-      return fromStorage;
-    }
-  } catch {
-    // ignore storage errors
-  }
-  return null;
-}
-
-export function setRoleCookie(role: Role | null) {
+export function clearLegacyRoleState() {
   if (typeof document === "undefined") return;
   const secure =
     typeof window !== "undefined" && window.location.protocol === "https:"
       ? "; Secure"
       : "";
-  if (!role) {
-    document.cookie = `${ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax${secure}`;
-    try {
-      window.localStorage.removeItem(ROLE_COOKIE);
-    } catch {
-      // ignore storage errors
-    }
-    return;
-  }
-  document.cookie = `${ROLE_COOKIE}=${role}; path=/; max-age=604800; SameSite=Lax${secure}`;
+  document.cookie = `${ROLE_COOKIE}=; path=/; max-age=0; SameSite=Lax${secure}`;
   try {
-    window.localStorage.setItem(ROLE_COOKIE, role);
+    window.localStorage.removeItem(ROLE_COOKIE);
   } catch {
     // ignore storage errors
   }

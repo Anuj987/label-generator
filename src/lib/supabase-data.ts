@@ -50,17 +50,10 @@ const CUSTOMER_COLUMNS =
 const ORDER_COLUMNS =
   "id,order_number,invoice_number,invoice_date,customer_id,delivery_date,status,remarks,created_by,created_at,priority,delivery_instructions,packing_started_at,packing_completed_at,delivery_started_at,delivery_completed_at,return_reason";
 const ORDER_ITEM_BASE_COLUMNS = "id,order_id,product_id,ordered_qty,product_name,unit";
-const ORDER_ITEM_ADMIN_COLUMNS =
-  "id,order_id,product_id,ordered_qty,product_name,unit,rate,selling_price";
 const PAYMENT_COLUMNS =
   "id,customer_id,invoice_number,invoice_date,amount,payment_mode,notes,received_by,created_at";
-
-/** Known staff rows in public.users */
-export const SUPABASE_USERS: UserProfile[] = [
-  { id: "b6b98dbb-37c9-4c7d-a267-3b0a9461996f", name: "Anuj", role: "admin" },
-  { id: "065d7fc9-f882-4e47-90c8-7e859e5f1f31", name: "Somnath", role: "packing" },
-  { id: "a06be2a4-842b-41fc-82ca-7c664e64637c", name: "Mayur", role: "delivery" },
-];
+const USER_PROFILE_COLUMNS = "id,name,role,active,auth_user_id";
+const USER_DIRECTORY_COLUMNS = "id,name";
 
 const CHECKLIST_KEY = "nt-checklist-completions-v1";
 
@@ -219,13 +212,8 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
     throw new Error("Supabase is not configured");
   }
 
-  const usersById = new Map(SUPABASE_USERS.map((user) => [user.id, user.name]));
-  const orderItemsQuery =
-    role === "admin"
-      ? supabase.from("order_items").select(ORDER_ITEM_ADMIN_COLUMNS)
-      : supabase.from("order_items").select(ORDER_ITEM_BASE_COLUMNS);
-
-  const [customersRes, ordersRes, itemsRes, paymentsRes] = await Promise.all([
+  const [usersRes, customersRes, ordersRes, itemsRes, paymentsRes] = await Promise.all([
+    supabase.from("users").select(USER_DIRECTORY_COLUMNS).eq("active", true),
     supabase
       .from("customers")
       .select(CUSTOMER_COLUMNS)
@@ -234,23 +222,62 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
       .from("orders")
       .select(ORDER_COLUMNS)
       .order("created_at", { ascending: false }),
-    orderItemsQuery,
+    supabase.from("order_items").select(ORDER_ITEM_BASE_COLUMNS),
     supabase
       .from("payments")
       .select(PAYMENT_COLUMNS)
       .order("created_at", { ascending: false }),
   ]);
 
+  if (usersRes.error) throw usersRes.error;
   if (customersRes.error) throw customersRes.error;
   if (ordersRes.error) throw ordersRes.error;
   if (itemsRes.error) throw itemsRes.error;
   // Payments may be empty / RLS readable
   const paymentsRows = paymentsRes.error ? [] : paymentsRes.data ?? [];
+  const usersById = new Map(
+    (usersRes.data ?? []).map((row) => [String(row.id), String(row.name ?? "Staff")]),
+  );
+  const pricesByItemId = new Map<string, { rate?: number; sellingPrice?: number }>();
+  if (role === "admin") {
+    const pricesRes = await supabase.rpc("get_admin_order_item_prices");
+    let priceRows = pricesRes.data ?? [];
+
+    // The Admin-only RPC arrives with the prepared RLS migration. Until then,
+    // current production permits these explicit columns through its existing
+    // order_items policy, so only a missing-RPC response uses this fallback.
+    if (pricesRes.error?.code === "PGRST202") {
+      const legacyPricesRes = await supabase
+        .from("order_items")
+        .select("id,rate,selling_price");
+      if (legacyPricesRes.error) throw legacyPricesRes.error;
+      priceRows = (legacyPricesRes.data ?? []).map((price) => ({
+        order_item_id: price.id,
+        rate: price.rate,
+        selling_price: price.selling_price,
+      }));
+    } else if (pricesRes.error) {
+      throw pricesRes.error;
+    }
+
+    for (const price of priceRows) {
+      pricesByItemId.set(String(price.order_item_id), {
+        rate: price.rate === null ? undefined : Number(price.rate),
+        sellingPrice:
+          price.selling_price === null ? undefined : Number(price.selling_price),
+      });
+    }
+  }
 
   const customers = (customersRes.data ?? []).map((row) => mapCustomer(row as Record<string, unknown>));
   const itemsByOrder = new Map<string, Record<string, unknown>[]>();
   for (const item of itemsRes.data ?? []) {
     const row = item as Record<string, unknown>;
+    const prices = pricesByItemId.get(String(row.id));
+    if (prices) {
+      row.rate = prices.rate;
+      row.selling_price = prices.sellingPrice;
+    }
     const orderId = String(row.order_id);
     const list = itemsByOrder.get(orderId) ?? [];
     list.push(row);
@@ -283,6 +310,31 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
     payments,
     auditEvents: [],
     nextOrderSequence: orders.length + 1,
+  };
+}
+
+function isRole(value: unknown): value is Role {
+  return value === "admin" || value === "packing" || value === "delivery";
+}
+
+export async function loadAuthenticatedProfile(authUserId: string): Promise<UserProfile | null> {
+  if (!supabase) throw new Error("Supabase is not configured");
+  const result = await supabase
+    .from("users")
+    .select(USER_PROFILE_COLUMNS)
+    .eq("auth_user_id", authUserId)
+    .maybeSingle();
+
+  if (result.error) throw result.error;
+  const row = result.data as Record<string, unknown> | null;
+  if (!row || row.active !== true || !isRole(row.role)) return null;
+
+  return {
+    id: String(row.id),
+    name: String(row.name ?? "Staff"),
+    role: row.role,
+    active: true,
+    authUserId,
   };
 }
 
@@ -411,7 +463,7 @@ export async function createLiveOrder(
 
   const items = await supabase
     .from("order_items")
-    .select(ORDER_ITEM_ADMIN_COLUMNS)
+    .select(ORDER_ITEM_BASE_COLUMNS)
     .eq("order_id", orderId);
   return mapOrder(
     inserted.data as Record<string, unknown>,
@@ -423,7 +475,7 @@ export async function createLiveOrder(
       gst_number: input.gst,
     },
     (items.data ?? []) as Record<string, unknown>[],
-    new Map(SUPABASE_USERS.map((user) => [user.id, user.name])),
+    new Map([[actor.id, actor.name]]),
   );
 }
 
@@ -521,6 +573,7 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
     .from("payments")
     .insert({
       customer_id: customer.id,
+      customer_name: customer.name,
       amount: input.amount,
       payment_mode: input.mode,
       invoice_number: input.invoiceNumber,
@@ -538,12 +591,8 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
   return mapPayment(
     inserted.data as Record<string, unknown>,
     customer.name,
-    new Map(SUPABASE_USERS.map((user) => [user.id, user.name])),
+    new Map([[actor.id, actor.name]]),
   );
-}
-
-export function userForRole(role: Role): UserProfile {
-  return SUPABASE_USERS.find((user) => user.role === role) ?? SUPABASE_USERS[0];
 }
 
 export function subscribeLiveChanges(onChange: () => void) {

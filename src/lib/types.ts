@@ -28,6 +28,8 @@ export type UserProfile = {
   id: string;
   name: string;
   role: Role;
+  active: boolean;
+  authUserId: string;
 };
 
 /** Optional directory for quick pick — orders still store typed name fields. */
