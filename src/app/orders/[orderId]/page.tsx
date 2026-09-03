@@ -78,13 +78,19 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
   async function saveEdit(event: FormEvent) {
     event.preventDefault();
     if (!order) return;
+    if (
+      products.some((product) => {
+        const quantity = Number(product.quantity);
+        return !Number.isFinite(quantity) || quantity <= 0;
+      })
+    ) return;
     await updateOrderBeforePacking(order.id, {
       ...form,
       gst: form.gst || undefined,
       notes: form.notes || undefined,
       products: products.map((product) => ({
         productName: product.productName,
-        quantity: Number(product.quantity) || 1,
+        quantity: Number(product.quantity),
         unit: product.unit,
         description: product.description.trim() || undefined,
         purchasePrice: product.purchasePrice.trim()
@@ -214,6 +220,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                     />
                     <Input
                       label="Qty"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      inputMode="decimal"
+                      required
                       value={product.quantity}
                       onChange={(event) =>
                         setProducts((previous) =>

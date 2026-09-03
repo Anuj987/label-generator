@@ -165,6 +165,9 @@ export default function DeliveryPage() {
                                 <Input
                                   label="Delivered qty"
                                   type="number"
+                                  min="0"
+                                  step="0.01"
+                                  inputMode="decimal"
                                   value={line.deliveredQuantity}
                                   onChange={(event) =>
                                     setPartialLines((previous) =>
@@ -179,6 +182,9 @@ export default function DeliveryPage() {
                                 <Input
                                   label="Returned qty"
                                   type="number"
+                                  min="0"
+                                  step="0.01"
+                                  inputMode="decimal"
                                   value={line.returnedQuantity}
                                   onChange={(event) =>
                                     setPartialLines((previous) =>

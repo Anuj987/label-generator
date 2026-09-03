@@ -113,6 +113,14 @@ export default function OrdersPage() {
     event.preventDefault();
     if (!form.customerName.trim()) return;
 
+    const orderProducts = products.filter((product) => product.productName.trim());
+    if (
+      orderProducts.some((product) => {
+        const quantity = Number(product.quantity);
+        return !Number.isFinite(quantity) || quantity <= 0;
+      })
+    ) return;
+
     const order = await createOrder({
       ...form,
       gst: form.gst || undefined,
@@ -120,11 +128,9 @@ export default function OrdersPage() {
       billingSource: form.billingSource || undefined,
       externalInvoiceId: form.externalInvoiceId || undefined,
       externalCustomerId: form.externalCustomerId || undefined,
-      products: products
-        .filter((product) => product.productName.trim())
-        .map((product) => ({
+      products: orderProducts.map((product) => ({
           productName: product.productName.trim(),
-          quantity: Number(product.quantity) || 1,
+          quantity: Number(product.quantity),
           unit: product.unit.trim() || "unit",
           description: product.description.trim() || undefined,
           purchasePrice: product.purchasePrice.trim()
@@ -336,7 +342,9 @@ export default function OrdersPage() {
                   <Input
                     label="Quantity"
                     type="number"
-                    min="1"
+                    min="0.01"
+                    step="0.01"
+                    inputMode="decimal"
                     required
                     value={product.quantity}
                     onChange={(event) =>

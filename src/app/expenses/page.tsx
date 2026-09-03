@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
 import { Button, EmptyState, Input, PageHeader, SectionCard, Select, TextArea } from "@/components/ui";
-import { formatCurrency, formatDate } from "@/lib/storage";
+import { formatDate } from "@/lib/storage";
 import type { ExpenseCategory } from "@/lib/types";
 
 const CATEGORIES: ExpenseCategory[] = [
@@ -17,6 +17,12 @@ const CATEGORIES: ExpenseCategory[] = [
 
 const RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+const expenseCurrencyFormatter = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 export default function ExpensesPage() {
   const { addExpense, currentUser, getExpenseReceiptUrl, state } = useAppContext();
@@ -119,6 +125,7 @@ export default function ExpensesPage() {
                 type="number"
                 min="0.01"
                 step="0.01"
+                inputMode="decimal"
                 required
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
@@ -162,7 +169,9 @@ export default function ExpensesPage() {
               <div key={expense.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-slate-950">{formatCurrency(expense.amount)}</p>
+                    <p className="font-semibold text-slate-950">
+                      {expenseCurrencyFormatter.format(expense.amount)}
+                    </p>
                     <p className="text-sm text-slate-600">
                       {expense.category} · {formatDate(expense.expenseDate)}
                     </p>
