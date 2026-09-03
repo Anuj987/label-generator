@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LogOut,
   Package,
+  ReceiptText,
   Search,
   Truck,
   Users,
@@ -27,6 +28,7 @@ const NAV: Record<Role, Array<{ href: string; label: string; icon: typeof Users 
     { href: "/customers", label: "Customers", icon: Users },
     { href: "/orders", label: "Orders", icon: ClipboardList },
     { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/expenses", label: "Expenses", icon: ReceiptText },
     { href: "/export", label: "Export", icon: Download },
     { href: "/search", label: "Search", icon: Search },
   ],
@@ -37,6 +39,7 @@ const NAV: Record<Role, Array<{ href: string; label: string; icon: typeof Users 
   delivery: [
     { href: "/delivery", label: "Delivery", icon: Truck },
     { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/expenses", label: "Expenses", icon: ReceiptText },
     { href: "/search", label: "Search", icon: Search },
   ],
 };

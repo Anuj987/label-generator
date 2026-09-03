@@ -133,6 +133,35 @@ export type Payment = {
   createdAt: string;
 };
 
+export type ExpenseCategory =
+  | "Fuel"
+  | "Transport"
+  | "Food"
+  | "Packing Material"
+  | "Loading/Unloading"
+  | "Other";
+
+export type Expense = {
+  id: string;
+  amount: number;
+  expenseDate: string;
+  category: ExpenseCategory;
+  note?: string;
+  submittedBy: string;
+  submittedByName: string;
+  receiptPath?: string;
+  receiptFileName?: string;
+  createdAt: string;
+};
+
+export type ExpenseInput = {
+  amount: number;
+  expenseDate: string;
+  category: ExpenseCategory;
+  note?: string;
+  receipt?: File;
+};
+
 export type AuditEvent = {
   id: string;
   orderId?: string;
@@ -149,6 +178,7 @@ export type AppState = {
   customers: Customer[];
   orders: Order[];
   payments: Payment[];
+  expenses: Expense[];
   auditEvents: AuditEvent[];
   nextOrderSequence: number;
 };

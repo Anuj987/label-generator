@@ -5,6 +5,8 @@ import type {
   CreateOrderInput,
   Customer,
   CustomerInput,
+  Expense,
+  ExpenseInput,
   Order,
   OrderProduct,
   OrderStatus,
@@ -52,8 +54,11 @@ const ORDER_COLUMNS =
 const ORDER_ITEM_BASE_COLUMNS = "id,order_id,product_id,ordered_qty,product_name,unit";
 const PAYMENT_COLUMNS =
   "id,customer_id,invoice_number,invoice_date,amount,payment_mode,notes,received_by,created_at";
+const EXPENSE_COLUMNS =
+  "id,amount,expense_date,category,description,submitted_by,receipt_path,receipt_file_name,created_at";
 const USER_PROFILE_COLUMNS = "id,name,role,active,auth_user_id";
 const USER_DIRECTORY_COLUMNS = "id,name";
+const EXPENSE_RECEIPTS_BUCKET = "expense-receipts";
 
 const CHECKLIST_KEY = "nt-checklist-completions-v1";
 
@@ -212,7 +217,7 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
     throw new Error("Supabase is not configured");
   }
 
-  const [usersRes, customersRes, ordersRes, itemsRes, paymentsRes] = await Promise.all([
+  const [usersRes, customersRes, ordersRes, itemsRes, paymentsRes, expensesRes] = await Promise.all([
     supabase.from("users").select(USER_DIRECTORY_COLUMNS).eq("active", true),
     supabase
       .from("customers")
@@ -227,6 +232,13 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
       .from("payments")
       .select(PAYMENT_COLUMNS)
       .order("created_at", { ascending: false }),
+    role === "admin" || role === "delivery"
+      ? supabase
+          .from("expenses")
+          .select(EXPENSE_COLUMNS)
+          .order("expense_date", { ascending: false })
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (usersRes.error) throw usersRes.error;
@@ -235,6 +247,7 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
   if (itemsRes.error) throw itemsRes.error;
   // Payments may be empty / RLS readable
   const paymentsRows = paymentsRes.error ? [] : paymentsRes.data ?? [];
+  if (expensesRes.error) throw expensesRes.error;
   const usersById = new Map(
     (usersRes.data ?? []).map((row) => [String(row.id), String(row.name ?? "Staff")]),
   );
@@ -303,13 +316,33 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
     const customerId = String(record.customer_id ?? "");
     return mapPayment(record, customerNameById.get(customerId) ?? "Customer", usersById);
   });
+  const expenses = (expensesRes.data ?? []).map((row) =>
+    mapExpense(row as Record<string, unknown>, usersById),
+  );
 
   return {
     customers,
     orders,
     payments,
+    expenses,
     auditEvents: [],
     nextOrderSequence: orders.length + 1,
+  };
+}
+
+function mapExpense(row: Record<string, unknown>, usersById: Map<string, string>): Expense {
+  const submittedBy = String(row.submitted_by ?? "");
+  return {
+    id: String(row.id),
+    amount: Number(row.amount ?? 0),
+    expenseDate: String(row.expense_date ?? ""),
+    category: String(row.category ?? "Other") as Expense["category"],
+    note: row.description ? String(row.description) : undefined,
+    submittedBy,
+    submittedByName: usersById.get(submittedBy) ?? "Staff",
+    receiptPath: row.receipt_path ? String(row.receipt_path) : undefined,
+    receiptFileName: row.receipt_file_name ? String(row.receipt_file_name) : undefined,
+    createdAt: String(row.created_at ?? new Date().toISOString()),
   };
 }
 
@@ -595,6 +628,66 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
   );
 }
 
+function safeReceiptName(name: string) {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "receipt";
+}
+
+export async function createLiveExpense(input: ExpenseInput, actor: UserProfile) {
+  if (!supabase) throw new Error("Supabase missing");
+  if (actor.role !== "admin" && actor.role !== "delivery") {
+    throw new Error("Expenses are restricted to Admin and Delivery");
+  }
+
+  let receiptPath: string | undefined;
+  if (input.receipt) {
+    receiptPath = `${actor.id}/${crypto.randomUUID()}-${safeReceiptName(input.receipt.name)}`;
+    const uploaded = await supabase.storage
+      .from(EXPENSE_RECEIPTS_BUCKET)
+      .upload(receiptPath, input.receipt, {
+        contentType: input.receipt.type || undefined,
+        upsert: false,
+      });
+    if (uploaded.error) throw uploaded.error;
+  }
+
+  const inserted = await supabase
+    .from("expenses")
+    .insert({
+      amount: input.amount,
+      expense_date: input.expenseDate,
+      category: input.category,
+      description: input.note?.trim() || null,
+      submitted_by: actor.id,
+      receipt_path: receiptPath ?? null,
+      receipt_file_name: input.receipt?.name ?? null,
+    })
+    .select(EXPENSE_COLUMNS)
+    .single();
+
+  if (inserted.error || !inserted.data) {
+    if (receiptPath) {
+      await supabase.storage.from(EXPENSE_RECEIPTS_BUCKET).remove([receiptPath]);
+    }
+    throw inserted.error ?? new Error("Expense create failed");
+  }
+
+  return mapExpense(
+    inserted.data as Record<string, unknown>,
+    new Map([[actor.id, actor.name]]),
+  );
+}
+
+export async function getLiveExpenseReceiptUrl(path: string) {
+  if (!supabase) throw new Error("Supabase missing");
+  const signed = await supabase.storage
+    .from(EXPENSE_RECEIPTS_BUCKET)
+    .createSignedUrl(path, 60);
+  if (signed.error || !signed.data) {
+    throw signed.error ?? new Error("Receipt could not be opened");
+  }
+  return signed.data.signedUrl;
+}
+
 export function subscribeLiveChanges(onChange: () => void) {
   if (!supabaseConfigured || !supabase) return () => undefined;
 
@@ -605,6 +698,7 @@ export function subscribeLiveChanges(onChange: () => void) {
     .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, onChange)
     .subscribe();
 
   return () => {

@@ -15,8 +15,10 @@ import { clearLegacyRoleState, fileToDataUrl, minutesBetween } from "@/lib/stora
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import {
   createLiveCustomer,
+  createLiveExpense,
   createLiveOrder,
   createLivePayment,
+  getLiveExpenseReceiptUrl,
   loadAuthenticatedProfile,
   loadLiveState,
   persistChecklistCompletion,
@@ -30,6 +32,7 @@ import type {
   CreateOrderInput,
   CustomerInput,
   DocumentKind,
+  ExpenseInput,
   Order,
   PartialDeliveryLine,
   PaymentInput,
@@ -61,6 +64,8 @@ type AppContextValue = {
   ) => Promise<void>;
   completeFullReturn: (orderId: string, reason: string, files: File[]) => Promise<void>;
   recordPayment: (input: PaymentInput) => Promise<void>;
+  addExpense: (input: ExpenseInput) => Promise<void>;
+  getExpenseReceiptUrl: (path: string) => Promise<string>;
   addOrderDocuments: (orderId: string, files: File[], kind: DocumentKind) => Promise<void>;
   searchAll: (query: string) => {
     customers: AppState["customers"];
@@ -75,6 +80,7 @@ const EMPTY_STATE: AppState = {
   customers: [],
   orders: [],
   payments: [],
+  expenses: [],
   auditEvents: [],
   nextOrderSequence: 1,
 };
@@ -702,6 +708,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       );
     }
 
+    async function addExpense(input: ExpenseInput) {
+      if (!currentUser) return;
+      if (currentUser.role !== "admin" && currentUser.role !== "delivery") return;
+      if (!liveMode) throw new Error("Expenses require Supabase");
+
+      await createLiveExpense(input, currentUser);
+      await refreshLive();
+    }
+
+    async function getExpenseReceiptUrl(path: string) {
+      if (!currentUser) throw new Error("Authentication required");
+      if (currentUser.role !== "admin" && currentUser.role !== "delivery") {
+        throw new Error("Receipt access is restricted");
+      }
+      return getLiveExpenseReceiptUrl(path);
+    }
+
     async function addOrderDocuments(orderId: string, files: File[], kind: DocumentKind) {
       if (!currentUser) return;
       const docs = await filesToDocuments(files, kind, { orderId });
@@ -767,6 +790,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       completePartialDelivery,
       completeFullReturn,
       recordPayment,
+      addExpense,
+      getExpenseReceiptUrl,
       addOrderDocuments,
       searchAll,
     };

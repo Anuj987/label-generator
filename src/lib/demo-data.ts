@@ -107,6 +107,7 @@ export function createInitialState(): AppState {
     })),
     orders: [],
     payments: [],
+    expenses: [],
     auditEvents: [],
     nextOrderSequence: 1,
   };
