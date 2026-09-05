@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAppContext } from "@/components/providers/app-provider";
-import { Badge, Button, EmptyState, PageHeader, SectionCard } from "@/components/ui";
-import { PRIORITY_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
+import { Badge, Button, EmptyState, PageHeader, SectionCard, Select } from "@/components/ui";
+import { PRIORITY_LABELS, totalQuantity } from "@/lib/demo-data";
 import { formatDate } from "@/lib/storage";
+import type { Order } from "@/lib/types";
+
+type OrderSort = "latest" | "urgent" | "very_urgent" | "oldest";
 
 export default function PackingPage() {
   const {
@@ -15,14 +18,25 @@ export default function PackingPage() {
     state,
     toggleChecklistItem,
   } = useAppContext();
+  const [sortBy, setSortBy] = useState<OrderSort>("latest");
 
-  const queue = useMemo(
-    () =>
-      sortOrdersByDelivery(
-        state.orders.filter((order) => order.status === "new" || order.status === "packing"),
-      ),
-    [state.orders],
-  );
+  const queue = useMemo(() => {
+    const visibleOrders = state.orders.filter(
+      (order) => order.status === "new" || order.status === "packing",
+    );
+    const newestFirst = (a: Order, b: Order) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+
+    return visibleOrders.sort((a, b) => {
+      if (sortBy === "oldest") return -newestFirst(a, b);
+      if (sortBy === "urgent" || sortBy === "very_urgent") {
+        const priorityDifference =
+          Number(b.priority === sortBy) - Number(a.priority === sortBy);
+        if (priorityDifference !== 0) return priorityDifference;
+      }
+      return newestFirst(a, b);
+    });
+  }, [sortBy, state.orders]);
 
   if (!currentUser) return null;
 
@@ -42,6 +56,19 @@ export default function PackingPage() {
         title="Packing queue"
         description="Accept new orders, complete the checklist, then mark Ready for Delivery."
       />
+
+      <div className="max-w-48">
+        <Select
+          label="Sort by"
+          value={sortBy}
+          onChange={(event) => setSortBy(event.target.value as OrderSort)}
+        >
+          <option value="latest">Latest</option>
+          <option value="urgent">Urgent</option>
+          <option value="very_urgent">Very Urgent</option>
+          <option value="oldest">Oldest</option>
+        </Select>
+      </div>
 
       <div className="space-y-4">
         {queue.map((order) => {
