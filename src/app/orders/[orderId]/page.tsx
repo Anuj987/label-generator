@@ -22,6 +22,24 @@ import {
 import { formatDate, formatDateTime } from "@/lib/storage";
 import type { Priority } from "@/lib/types";
 
+type ProductDraft = {
+  productName: string;
+  quantity: string;
+  unit: string;
+  description: string;
+  purchasePrice: string;
+  sellingPrice: string;
+};
+
+const emptyProduct = (): ProductDraft => ({
+  productName: "",
+  quantity: "1",
+  unit: "kg",
+  description: "",
+  purchasePrice: "",
+  sellingPrice: "",
+});
+
 export default function OrderDetailPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params);
   const { currentUser, state, updateOrderBeforePacking } = useAppContext();
@@ -204,11 +222,22 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                 value={form.notes}
                 onChange={(event) => setForm((previous) => ({ ...previous, notes: event.target.value }))}
               />
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <p className="font-medium text-slate-900">Products</p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setProducts((previous) => [...previous, emptyProduct()])}
+                >
+                  Add Product
+                </Button>
+              </div>
               {products.map((product, index) => (
                 <div key={index} className="grid gap-2 rounded-2xl border border-slate-200 p-3">
                   <div className="grid gap-2 sm:grid-cols-3">
                     <Input
-                      label="Product"
+                      label="Product / grade name"
+                      required
                       value={product.productName}
                       onChange={(event) =>
                         setProducts((previous) =>
@@ -293,6 +322,20 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
                         )
                       }
                     />
+                  </div>
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="danger"
+                      disabled={products.length === 1}
+                      onClick={() =>
+                        setProducts((previous) =>
+                          previous.filter((_, itemIndex) => itemIndex !== index),
+                        )
+                      }
+                    >
+                      Remove Product
+                    </Button>
                   </div>
                 </div>
               ))}

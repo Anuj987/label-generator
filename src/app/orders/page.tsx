@@ -14,8 +14,8 @@ import {
   Select,
   TextArea,
 } from "@/components/ui";
-import { PRIORITY_LABELS, STATUS_LABELS, sortOrdersByDelivery, totalQuantity } from "@/lib/demo-data";
-import type { Priority } from "@/lib/types";
+import { PRIORITY_LABELS, STATUS_LABELS, totalQuantity } from "@/lib/demo-data";
+import type { Order, Priority } from "@/lib/types";
 
 type ProductDraft = {
   productName: string;
@@ -25,6 +25,8 @@ type ProductDraft = {
   purchasePrice: string;
   sellingPrice: string;
 };
+
+type OrderSort = "latest" | "urgent" | "very_urgent" | "oldest";
 
 const emptyProduct = (): ProductDraft => ({
   productName: "",
@@ -39,6 +41,7 @@ export default function OrdersPage() {
   const router = useRouter();
   const { createOrder, currentUser, state } = useAppContext();
   const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<OrderSort>("latest");
   const deferredQuery = useDeferredValue(query);
   const [customerMenuOpen, setCustomerMenuOpen] = useState(false);
   const customerFieldRef = useRef<HTMLDivElement>(null);
@@ -61,16 +64,29 @@ export default function OrdersPage() {
 
   const filtered = useMemo(() => {
     const search = deferredQuery.trim().toLowerCase();
-    const list = sortOrdersByDelivery(state.orders);
-    if (!search) return list;
-    return list.filter(
-      (order) =>
-        order.orderNumber.toLowerCase().includes(search) ||
-        order.invoiceNumber.toLowerCase().includes(search) ||
-        order.customerName.toLowerCase().includes(search) ||
-        order.mobile.includes(search),
-    );
-  }, [deferredQuery, state.orders]);
+    const matchingOrders = search
+      ? state.orders.filter(
+          (order) =>
+            order.orderNumber.toLowerCase().includes(search) ||
+            order.invoiceNumber.toLowerCase().includes(search) ||
+            order.customerName.toLowerCase().includes(search) ||
+            order.mobile.includes(search),
+        )
+      : state.orders;
+    const newestFirst = (a: Order, b: Order) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+
+    return [...matchingOrders].sort((a, b) => {
+      if (sortBy === "oldest") return -newestFirst(a, b);
+      if (sortBy === "urgent" || sortBy === "very_urgent") {
+        const targetPriority = sortBy;
+        const priorityDifference =
+          Number(b.priority === targetPriority) - Number(a.priority === targetPriority);
+        if (priorityDifference !== 0) return priorityDifference;
+      }
+      return newestFirst(a, b);
+    });
+  }, [deferredQuery, sortBy, state.orders]);
 
   const suggestions = useMemo(() => {
     const search = form.customerName.trim().toLowerCase();
@@ -432,15 +448,27 @@ export default function OrdersPage() {
       <SectionCard
         title="All orders"
         titleClassName="text-xl sm:text-2xl"
-        description="Today’s delivery date orders stay on top."
+        description="Search every order and choose how the full list is sorted."
         className="border-slate-200 bg-white"
       >
-        <Input
-          label="Search orders"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Customer name, NT-00001, INV..."
-        />
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
+          <Input
+            label="Search orders"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Customer name, NT-00001, INV..."
+          />
+          <Select
+            label="Sort by"
+            value={sortBy}
+            onChange={(event) => setSortBy(event.target.value as OrderSort)}
+          >
+            <option value="latest">Latest</option>
+            <option value="urgent">Urgent</option>
+            <option value="very_urgent">Very Urgent</option>
+            <option value="oldest">Oldest</option>
+          </Select>
+        </div>
         <div className="mt-4 space-y-3">
           {filtered.map((order) => (
             <Link
