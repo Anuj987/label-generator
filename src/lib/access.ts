@@ -8,6 +8,7 @@ export const ROLE_HOME: Record<Role, string> = {
 
 export function roleCanAccessPath(role: Role, pathname: string) {
   if (pathname === "/" || pathname === "/search") return true;
+  if (pathname === "/api/notifications/new-order") return role === "admin";
   if (pathname.startsWith("/orders/")) return true;
   if (pathname === "/payments") return role === "admin" || role === "delivery";
   if (pathname === "/expenses") return role === "admin" || role === "delivery";

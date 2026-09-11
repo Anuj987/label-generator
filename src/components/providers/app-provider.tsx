@@ -13,6 +13,7 @@ import {
 import { createId, generatePackingChecklist } from "@/lib/demo-data";
 import { clearLegacyRoleState, fileToDataUrl, minutesBetween } from "@/lib/storage";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
+import { logoutPushNotifications } from "@/lib/onesignal-client";
 import {
   createLiveCustomer,
   createLiveExpense,
@@ -197,6 +198,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function logout() {
       clearLegacyRoleState();
+      await logoutPushNotifications();
       if (supabase) await supabase.auth.signOut();
       setCurrentUser(null);
       setState(EMPTY_STATE);
@@ -238,6 +240,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (liveMode) {
         const order = await createLiveOrder(input, currentUser, state.orders);
+        try {
+          await fetch("/api/notifications/new-order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orderId: order.id }),
+          });
+        } catch (error) {
+          console.error("New-order push notification could not be sent", error);
+        }
         await refreshLive();
         return order;
       }
