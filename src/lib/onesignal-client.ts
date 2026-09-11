@@ -20,19 +20,32 @@ declare global {
 }
 
 const appId = process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID;
+const DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000;
 
 export function oneSignalConfigured() {
   return Boolean(appId);
 }
 
-export function getOneSignal(): Promise<OneSignalSdk> {
+export function getOneSignal(
+  timeoutMs = DEFAULT_INITIALIZATION_TIMEOUT_MS,
+): Promise<OneSignalSdk> {
   if (!appId) return Promise.reject(new Error("OneSignal is not configured"));
+  if (window.ntOneSignal) return Promise.resolve(window.ntOneSignal);
   if (window.ntOneSignalInit) return window.ntOneSignalInit;
 
   window.OneSignalDeferred = window.OneSignalDeferred || [];
-  window.ntOneSignalInit = new Promise((resolve, reject) => {
+  let timeoutId: number | undefined;
+  const initialization = new Promise<OneSignalSdk>((resolve, reject) => {
+    timeoutId = window.setTimeout(
+      () => reject(new Error("OneSignal initialization timed out")),
+      timeoutMs,
+    );
     window.OneSignalDeferred?.push(async (oneSignal) => {
       try {
+        if (window.ntOneSignal) {
+          resolve(window.ntOneSignal);
+          return;
+        }
         await oneSignal.init({
           appId,
           allowLocalhostAsSecureOrigin: process.env.NODE_ENV !== "production",
@@ -44,7 +57,19 @@ export function getOneSignal(): Promise<OneSignalSdk> {
       }
     });
   });
-  return window.ntOneSignalInit;
+  const trackedInitialization = initialization.finally(() => {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  });
+  window.ntOneSignalInit = trackedInitialization;
+  void trackedInitialization.catch(() => {
+    if (window.ntOneSignalInit === trackedInitialization) window.ntOneSignalInit = undefined;
+  });
+  return trackedInitialization;
+}
+
+export function retryOneSignal() {
+  window.ntOneSignalInit = undefined;
+  return getOneSignal();
 }
 
 export async function logoutPushNotifications() {
