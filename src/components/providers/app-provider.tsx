@@ -241,13 +241,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (liveMode) {
         const order = await createLiveOrder(input, currentUser, state.orders);
         try {
-          await fetch("/api/notifications/new-order", {
+          const notificationResponse = await fetch("/api/notifications/new-order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ orderId: order.id }),
           });
+          if (!notificationResponse.ok) {
+            const notificationError = (await notificationResponse.json().catch(() => null)) as
+              | { error?: unknown }
+              | null;
+            console.error("New-order push notification could not be sent", {
+              status: notificationResponse.status,
+              error:
+                typeof notificationError?.error === "string"
+                  ? notificationError.error
+                  : "Notification request failed",
+            });
+          }
         } catch (error) {
-          console.error("New-order push notification could not be sent", error);
+          console.error("New-order push notification request failed", {
+            errorName: error instanceof Error ? error.name : "UnknownError",
+          });
         }
         await refreshLive();
         return order;

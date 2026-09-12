@@ -50,7 +50,11 @@ export async function POST(request: Request) {
   }
 
   const [customer, recipients] = await Promise.all([
-    supabase.from("customers").select("name").eq("id", order.data.customer_id).single(),
+    supabase
+      .from("customers")
+      .select("customer_name")
+      .eq("id", order.data.customer_id)
+      .single(),
     supabase
       .from("users")
       .select("auth_user_id")
@@ -80,13 +84,17 @@ export async function POST(request: Request) {
       target_channel: "push",
       headings: { en: "New Order Received" },
       contents: {
-        en: `${order.data.order_number} — ${customer.data.name}\nPriority: ${order.data.priority}`,
+        en: `${order.data.order_number} — ${customer.data.customer_name}\nPriority: ${order.data.priority}`,
       },
       url: new URL("/", request.url).toString(),
     }),
   });
 
   if (!response.ok) {
+    console.error("OneSignal rejected a new-order notification", {
+      status: response.status,
+      statusText: response.statusText,
+    });
     return Response.json({ error: "Push provider rejected the notification" }, { status: 502 });
   }
   return Response.json({ sent: true });
