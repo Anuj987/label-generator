@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { PRIORITY_LABELS, STATUS_LABELS, totalQuantity } from "@/lib/demo-data";
 import type { Order, Priority } from "@/lib/types";
+import { parseWhatsAppOrder } from "@/lib/whatsapp-order-parser";
 
 type ProductDraft = {
   productName: string;
@@ -61,6 +62,9 @@ export default function OrdersPage() {
     externalCustomerId: "",
   });
   const [products, setProducts] = useState<ProductDraft[]>([emptyProduct()]);
+  const [whatsAppMessage, setWhatsAppMessage] = useState("");
+  const [parseWarnings, setParseWarnings] = useState<string[]>([]);
+  const [draftPrepared, setDraftPrepared] = useState(false);
 
   const filtered = useMemo(() => {
     const search = deferredQuery.trim().toLowerCase();
@@ -122,6 +126,46 @@ export default function OrdersPage() {
       mobile: match?.mobile || previous.mobile,
       gst: match?.gst || previous.gst,
     }));
+    setCustomerMenuOpen(false);
+  }
+
+  function prepareWhatsAppDraft() {
+    if (!whatsAppMessage.trim()) return;
+    const parsed = parseWhatsAppOrder(whatsAppMessage, state.customers);
+    const customerMatch = parsed.customerName
+      ? state.customers.find(
+          (customer) => customer.name.toLowerCase() === parsed.customerName?.toLowerCase(),
+        )
+      : undefined;
+
+    setForm((previous) => ({
+      ...previous,
+      customerName: customerMatch?.name || parsed.customerName || "",
+      contactPerson: parsed.contactPerson || customerMatch?.name || "",
+      mobile: parsed.mobile || customerMatch?.mobile || "",
+      address: parsed.address || "",
+      gst: customerMatch?.gst || "",
+      invoiceNumber: parsed.invoiceNumber || "",
+      deliveryDate: parsed.deliveryDate || previous.deliveryDate,
+      priority: parsed.priority,
+      notes: parsed.notes || "",
+    }));
+    setProducts(
+      parsed.products.length
+        ? parsed.products.map((product) => ({
+            productName: product.productName,
+            quantity: String(product.quantity),
+            unit: product.unit,
+            description: "",
+            purchasePrice:
+              product.purchasePrice === undefined ? "" : String(product.purchasePrice),
+            sellingPrice:
+              product.sellingPrice === undefined ? "" : String(product.sellingPrice),
+          }))
+        : [emptyProduct()],
+    );
+    setParseWarnings(parsed.warnings);
+    setDraftPrepared(true);
     setCustomerMenuOpen(false);
   }
 
@@ -204,6 +248,52 @@ export default function OrdersPage() {
         className="border-teal-300/80 bg-gradient-to-br from-teal-50 via-white to-slate-50 p-5 shadow-md shadow-teal-900/5 sm:p-7"
       >
         <form className="grid gap-5" onSubmit={handleSubmit}>
+          <div className="space-y-3 rounded-3xl border border-emerald-200 bg-emerald-50/70 p-4 sm:p-5">
+            <div>
+              <p className="text-lg font-semibold text-slate-900">Paste WhatsApp order</p>
+              <p className="text-sm text-slate-600">
+                Prepare an editable draft from a message. Nothing is saved until you review the
+                form and click Create order.
+              </p>
+            </div>
+            <TextArea
+              label="WhatsApp message"
+              rows={6}
+              value={whatsAppMessage}
+              onChange={(event) => {
+                setWhatsAppMessage(event.target.value);
+                setDraftPrepared(false);
+                setParseWarnings([]);
+              }}
+              placeholder={"Veg Sagar 2.5 kg SSP2 and 4 kg DP\nPriority: Urgent\nNotes: Deliver tomorrow"}
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!whatsAppMessage.trim()}
+                onClick={prepareWhatsAppDraft}
+              >
+                Prepare order draft
+              </Button>
+              {draftPrepared ? (
+                <p className="text-sm font-medium text-emerald-800">
+                  Draft prepared. Review every field before creating the order.
+                </p>
+              ) : null}
+            </div>
+            {parseWarnings.length ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="font-semibold">Needs your review</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {parseWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+
           <div className="relative" ref={customerFieldRef}>
             <Input
               label="Customer name"
