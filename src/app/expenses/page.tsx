@@ -37,13 +37,13 @@ export default function ExpensesPage() {
   const visibleExpenses = useMemo(() => {
     if (!currentUser) return [];
     if (currentUser.role === "admin") return state.expenses;
-    if (currentUser.role === "delivery") {
+    if (currentUser.role === "delivery" || currentUser.role === "packing") {
       return state.expenses.filter((expense) => expense.submittedBy === currentUser.id);
     }
     return [];
   }, [currentUser, state.expenses]);
 
-  if (!currentUser || (currentUser.role !== "admin" && currentUser.role !== "delivery")) {
+  if (!currentUser) {
     return null;
   }
 

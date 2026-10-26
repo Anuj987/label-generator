@@ -20,6 +20,7 @@ import {
   createLiveOrder,
   createLivePayment,
   getLiveExpenseReceiptUrl,
+  getLivePaymentProofUrl,
   loadAuthenticatedProfile,
   loadLiveState,
   persistChecklistCompletion,
@@ -67,6 +68,7 @@ type AppContextValue = {
   recordPayment: (input: PaymentInput) => Promise<void>;
   addExpense: (input: ExpenseInput) => Promise<void>;
   getExpenseReceiptUrl: (path: string) => Promise<string>;
+  getPaymentProofUrl: (path: string) => Promise<string>;
   addOrderDocuments: (orderId: string, files: File[], kind: DocumentKind) => Promise<void>;
   searchAll: (query: string) => {
     customers: AppState["customers"];
@@ -677,7 +679,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function recordPayment(input: PaymentInput) {
       if (!currentUser) return;
-      if (currentUser.role === "packing") return;
+      if (
+        currentUser.role !== "admin" &&
+        currentUser.role !== "packing" &&
+        currentUser.role !== "delivery"
+      ) return;
 
       if (liveMode) {
         await createLivePayment(input, currentUser);
@@ -735,7 +741,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function addExpense(input: ExpenseInput) {
       if (!currentUser) return;
-      if (currentUser.role !== "admin" && currentUser.role !== "delivery") return;
+      if (
+        currentUser.role !== "admin" &&
+        currentUser.role !== "packing" &&
+        currentUser.role !== "delivery"
+      ) return;
       if (!liveMode) throw new Error("Expenses require Supabase");
 
       await createLiveExpense(input, currentUser);
@@ -744,10 +754,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function getExpenseReceiptUrl(path: string) {
       if (!currentUser) throw new Error("Authentication required");
-      if (currentUser.role !== "admin" && currentUser.role !== "delivery") {
-        throw new Error("Receipt access is restricted");
-      }
+      if (
+        currentUser.role !== "admin" &&
+        currentUser.role !== "packing" &&
+        currentUser.role !== "delivery"
+      ) throw new Error("Receipt access is restricted");
       return getLiveExpenseReceiptUrl(path);
+    }
+
+    async function getPaymentProofUrl(path: string) {
+      if (!currentUser) throw new Error("Authentication required");
+      if (
+        currentUser.role !== "admin" &&
+        currentUser.role !== "packing" &&
+        currentUser.role !== "delivery"
+      ) throw new Error("Payment proof access is restricted");
+      return getLivePaymentProofUrl(path);
     }
 
     async function addOrderDocuments(orderId: string, files: File[], kind: DocumentKind) {
@@ -817,6 +839,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       recordPayment,
       addExpense,
       getExpenseReceiptUrl,
+      getPaymentProofUrl,
       addOrderDocuments,
       searchAll,
     };

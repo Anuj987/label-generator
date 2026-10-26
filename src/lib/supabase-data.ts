@@ -53,12 +53,13 @@ const ORDER_COLUMNS =
   "id,order_number,invoice_number,invoice_date,customer_id,delivery_date,status,remarks,created_by,created_at,priority,delivery_instructions,packing_started_at,packing_completed_at,delivery_started_at,delivery_completed_at,return_reason";
 const ORDER_ITEM_BASE_COLUMNS = "id,order_id,product_id,ordered_qty,product_name,unit";
 const PAYMENT_COLUMNS =
-  "id,customer_id,invoice_number,invoice_date,amount,payment_mode,notes,received_by,created_at";
+  "id,customer_id,customer_name,invoice_number,invoice_date,amount,payment_mode,notes,payment_document_url,payment_document_name,payment_document_type,received_by,created_at";
 const EXPENSE_COLUMNS =
   "id,amount,expense_date,category,description,submitted_by,receipt_path,receipt_file_name,created_at";
 const USER_PROFILE_COLUMNS = "id,name,role,active,auth_user_id";
 const USER_DIRECTORY_COLUMNS = "id,name";
 const EXPENSE_RECEIPTS_BUCKET = "expense-receipts";
+const PAYMENT_PROOFS_BUCKET = "payment-proofs";
 
 const CHECKLIST_KEY = "nt-checklist-completions-v1";
 
@@ -185,6 +186,9 @@ function mapPayment(row: Record<string, unknown>, customerName: string, usersByI
     orderId: undefined,
     notes: row.notes ? String(row.notes) : undefined,
     documents: [],
+    proofPath: row.payment_document_url ? String(row.payment_document_url) : undefined,
+    proofFileName: row.payment_document_name ? String(row.payment_document_name) : undefined,
+    proofContentType: row.payment_document_type ? String(row.payment_document_type) : undefined,
     collectedBy: usersById.get(receivedBy) ?? "Staff",
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
@@ -232,7 +236,7 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
       .from("payments")
       .select(PAYMENT_COLUMNS)
       .order("created_at", { ascending: false }),
-    role === "admin" || role === "delivery"
+    role === "admin" || role === "delivery" || role === "packing"
       ? supabase
           .from("expenses")
           .select(EXPENSE_COLUMNS)
@@ -314,7 +318,11 @@ async function fetchLiveState(role?: Role): Promise<AppState> {
   const payments = paymentsRows.map((row) => {
     const record = row as Record<string, unknown>;
     const customerId = String(record.customer_id ?? "");
-    return mapPayment(record, customerNameById.get(customerId) ?? "Customer", usersById);
+    return mapPayment(
+      record,
+      String(record.customer_name ?? customerNameById.get(customerId) ?? "Customer"),
+      usersById,
+    );
   });
   const expenses = (expensesRes.data ?? []).map((row) =>
     mapExpense(row as Record<string, unknown>, usersById),
@@ -594,13 +602,46 @@ export async function updateLiveOrderItemsQuantities(
 
 export async function createLivePayment(input: PaymentInput, actor: UserProfile) {
   if (!supabase) throw new Error("Supabase missing");
+  if (actor.role !== "admin" && actor.role !== "packing" && actor.role !== "delivery") {
+    throw new Error("Payment collection is not permitted");
+  }
 
-  const customer = await findOrCreateCustomer({
-    name: input.customerName,
-    contactPerson: input.customerName,
-    mobile: "",
-    address: "",
-  });
+  let customer: Customer;
+  if (input.customerId) {
+    const selected = await supabase
+      .from("customers")
+      .select(CUSTOMER_COLUMNS)
+      .eq("id", input.customerId)
+      .single();
+    if (selected.error || !selected.data) {
+      throw selected.error ?? new Error("Selected customer was not found");
+    }
+    customer = mapCustomer(selected.data as Record<string, unknown>);
+  } else {
+    if (actor.role === "packing") {
+      throw new Error("Packing must select an existing customer");
+    }
+    customer = await findOrCreateCustomer({
+      name: input.customerName,
+      contactPerson: input.customerName,
+      mobile: "",
+      address: "",
+    });
+  }
+
+  let proofPath: string | undefined;
+  if (input.proof) {
+    proofPath = `${actor.id}/${crypto.randomUUID()}-${safeReceiptName(input.proof.name)}`;
+    const uploaded = await supabase.storage
+      .from(PAYMENT_PROOFS_BUCKET)
+      .upload(proofPath, input.proof, {
+        contentType: input.proof.type || undefined,
+        upsert: false,
+      });
+    if (uploaded.error) {
+      throw new Error(`Payment proof upload failed: ${uploaded.error.message}`);
+    }
+  }
 
   const inserted = await supabase
     .from("payments")
@@ -612,12 +653,23 @@ export async function createLivePayment(input: PaymentInput, actor: UserProfile)
       invoice_number: input.invoiceNumber,
       invoice_date: input.invoiceDate || null,
       notes: input.notes || null,
+      payment_document_url: proofPath ?? null,
+      payment_document_name: input.proof?.name ?? null,
+      payment_document_type: input.proof?.type || null,
       received_by: actor.id,
     })
     .select(PAYMENT_COLUMNS)
     .single();
 
   if (inserted.error || !inserted.data) {
+    if (proofPath) {
+      const cleanup = await supabase.storage.from(PAYMENT_PROOFS_BUCKET).remove([proofPath]);
+      if (cleanup.error) {
+        throw new Error(
+          `Payment was not saved and its proof cleanup failed: ${inserted.error?.message ?? "unknown payment error"}`,
+        );
+      }
+    }
     throw inserted.error ?? new Error("Payment create failed");
   }
 
@@ -634,8 +686,8 @@ function safeReceiptName(name: string) {
 
 export async function createLiveExpense(input: ExpenseInput, actor: UserProfile) {
   if (!supabase) throw new Error("Supabase missing");
-  if (actor.role !== "admin" && actor.role !== "delivery") {
-    throw new Error("Expenses are restricted to Admin and Delivery");
+  if (actor.role !== "admin" && actor.role !== "packing" && actor.role !== "delivery") {
+    throw new Error("Expense submission is not permitted");
   }
 
   let receiptPath: string | undefined;
@@ -684,6 +736,15 @@ export async function getLiveExpenseReceiptUrl(path: string) {
     .createSignedUrl(path, 60);
   if (signed.error || !signed.data) {
     throw signed.error ?? new Error("Receipt could not be opened");
+  }
+  return signed.data.signedUrl;
+}
+
+export async function getLivePaymentProofUrl(path: string) {
+  if (!supabase) throw new Error("Supabase missing");
+  const signed = await supabase.storage.from(PAYMENT_PROOFS_BUCKET).createSignedUrl(path, 60);
+  if (signed.error || !signed.data) {
+    throw signed.error ?? new Error("Payment proof could not be opened");
   }
   return signed.data.signedUrl;
 }

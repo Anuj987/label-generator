@@ -10,8 +10,7 @@ export function roleCanAccessPath(role: Role, pathname: string) {
   if (pathname === "/" || pathname === "/search") return true;
   if (pathname === "/api/notifications/new-order") return role === "admin";
   if (pathname.startsWith("/orders/")) return true;
-  if (pathname === "/payments") return role === "admin" || role === "delivery";
-  if (pathname === "/expenses") return role === "admin" || role === "delivery";
+  if (pathname === "/payments" || pathname === "/expenses") return true;
   if (pathname === "/packing") return role === "packing";
   if (pathname === "/delivery") return role === "delivery";
   if (

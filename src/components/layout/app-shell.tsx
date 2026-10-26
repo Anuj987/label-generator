@@ -35,6 +35,8 @@ const NAV: Record<Role, Array<{ href: string; label: string; icon: typeof Users 
   ],
   packing: [
     { href: "/packing", label: "Packing", icon: Package },
+    { href: "/payments", label: "Payments", icon: Wallet },
+    { href: "/expenses", label: "Expenses", icon: ReceiptText },
     { href: "/search", label: "Search", icon: Search },
   ],
   delivery: [

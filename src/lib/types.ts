@@ -129,6 +129,9 @@ export type Payment = {
   orderId?: string;
   notes?: string;
   documents: UploadedFile[];
+  proofPath?: string;
+  proofFileName?: string;
+  proofContentType?: string;
   collectedBy: string;
   createdAt: string;
 };
@@ -217,6 +220,7 @@ export type CreateOrderInput = {
 };
 
 export type PaymentInput = {
+  customerId?: string;
   customerName: string;
   invoiceNumber: string;
   invoiceDate: string;
@@ -224,5 +228,6 @@ export type PaymentInput = {
   mode: PaymentMode;
   orderId?: string;
   notes?: string;
+  proof?: File;
   files?: { name: string; kind: DocumentKind; dataUrl: string }[];
 };
